@@ -47,6 +47,89 @@ func TestEtcd_LBsAgainstEmbeddedEtcd(t *testing.T) {
 	}
 }
 
+// TestEtcd_LBListAndDelete exercises List (filtered + unfiltered),
+// Create-duplicate, Delete success/missing, and Get missing — the
+// branches the happy-path test skips.
+func TestEtcd_LBListAndDelete(t *testing.T) {
+	c, _ := etcdtest.New(t)
+	s := NewEtcd(c)
+	ctx := context.Background()
+
+	// Empty List : no error, zero entries.
+	lbs, err := s.List(ctx, ListFilter{})
+	if err != nil {
+		t.Fatalf("List empty : %v", err)
+	}
+	if len(lbs) != 0 {
+		t.Errorf("List empty = %d ; want 0", len(lbs))
+	}
+
+	// Get + Delete of-missing.
+	if _, err := s.Get(ctx, "nope"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("Get missing = %v ; want ErrNotFound", err)
+	}
+	if err := s.Delete(ctx, "nope"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("Delete missing = %v ; want ErrNotFound", err)
+	}
+
+	// Seed three LBs across two projects.
+	if _, err := s.Create(ctx, LoadBalancer{UUID: "l1", Name: "web-a", Mode: "L7", Port: 443, Project: "p1", CreatedAtNs: 1}); err != nil {
+		t.Fatalf("Create l1 : %v", err)
+	}
+	if _, err := s.Create(ctx, LoadBalancer{UUID: "l2", Name: "web-b", Mode: "L7", Port: 443, Project: "p1", CreatedAtNs: 2}); err != nil {
+		t.Fatalf("Create l2 : %v", err)
+	}
+	if _, err := s.Create(ctx, LoadBalancer{UUID: "l3", Name: "pg", Mode: "L4", Port: 5432, Project: "p2", CreatedAtNs: 3}); err != nil {
+		t.Fatalf("Create l3 : %v", err)
+	}
+
+	// Duplicate (project, name) : rejected.
+	if _, err := s.Create(ctx, LoadBalancer{UUID: "lDup", Name: "web-a", Mode: "L7", Port: 443, Project: "p1"}); !errors.Is(err, ErrAlreadyExists) {
+		t.Errorf("dup Create = %v ; want ErrAlreadyExists", err)
+	}
+	// Cross-project same name : allowed.
+	if _, err := s.Create(ctx, LoadBalancer{UUID: "l4", Name: "web-a", Mode: "L7", Port: 443, Project: "other", CreatedAtNs: 4}); err != nil {
+		t.Errorf("cross-project same name : %v", err)
+	}
+
+	// Unfiltered List : 4.
+	all, _ := s.List(ctx, ListFilter{})
+	if len(all) != 4 {
+		t.Errorf("List all = %d ; want 4", len(all))
+	}
+	// Filtered List : 2 in p1.
+	p1, _ := s.List(ctx, ListFilter{Project: "p1"})
+	if len(p1) != 2 {
+		t.Errorf("List(p1) = %d ; want 2", len(p1))
+	}
+	// Filtered List : 0 for non-existent project.
+	none, _ := s.List(ctx, ListFilter{Project: "nobody"})
+	if len(none) != 0 {
+		t.Errorf("List(nobody) = %d ; want 0", len(none))
+	}
+
+	// Get happy-path : confirms JSON round-trip.
+	got, err := s.Get(ctx, "l1")
+	if err != nil {
+		t.Fatalf("Get l1 : %v", err)
+	}
+	if got.Name != "web-a" || got.Port != 443 {
+		t.Errorf("Get returned wrong LB : %+v", got)
+	}
+
+	// Delete happy path + idempotency check.
+	if err := s.Delete(ctx, "l3"); err != nil {
+		t.Fatalf("Delete l3 : %v", err)
+	}
+	if _, err := s.Get(ctx, "l3"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("Get after delete = %v ; want ErrNotFound", err)
+	}
+	// Repeat delete : ErrNotFound (resp.Deleted == 0).
+	if err := s.Delete(ctx, "l3"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("Delete twice = %v ; want ErrNotFound", err)
+	}
+}
+
 // TestEtcd_SetBackendsHandlesContention drives the OCC retry loop :
 // two goroutines try to SetBackends on the same LB concurrently.
 // Both must succeed (each retries after losing the ModRevision race) ;
