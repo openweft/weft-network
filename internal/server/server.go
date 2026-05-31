@@ -78,8 +78,11 @@ func New(opts Options) *Server {
 			} else {
 				etcdClient = c
 				stores.SchedulingRules = scheduling.NewEtcd(c)
-				opts.Logger.Info("etcd-backed stores wired", "url", opts.EtcdURL, "domains", "scheduling-rules")
-				// TODO : DNS / routers / load balancers — same pattern.
+				stores.DNS = dns.NewEtcd(c)
+				stores.Routers = router.NewEtcd(c)
+				stores.LBs = lb.NewEtcd(c)
+				opts.Logger.Info("etcd-backed stores wired", "url", opts.EtcdURL,
+					"domains", "scheduling-rules,dns,routers,load-balancers")
 			}
 		}
 	}
