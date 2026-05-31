@@ -5,13 +5,21 @@
 # 16 MB ; no shell, no package manager, no surface area beyond the
 # daemon itself.
 #
+# The build EXPECTS a vendored module tree. Run `go mod vendor`
+# (pointing at a checked-out sibling weft-network-proto) before
+# `docker build` ; the in-repo go.mod has a `replace ../weft-network-proto`
+# directive that the vendor step resolves, and the Dockerfile then
+# builds with `-mod=vendor` so no network access is needed.
+#
 # Build args :
 #   - VERSION : git describe output, stamped into the binary via
 #     -ldflags so `weft-network --version` returns something useful.
 #   - COMMIT  : short sha.
 #   - DATE    : RFC-3339 UTC build timestamp.
 #
-# Pass them at build time :
+# Pre-build + build sequence :
+#   git clone https://github.com/openweft/weft-network-proto ../weft-network-proto
+#   go mod vendor
 #   docker build \
 #     --build-arg VERSION=$(git describe --tags --always --dirty) \
 #     --build-arg COMMIT=$(git rev-parse --short HEAD) \
@@ -23,24 +31,18 @@ ARG GO_VERSION=1.26
 # ---- build stage --------------------------------------------------
 FROM golang:${GO_VERSION}-alpine AS build
 
-# We pull the sibling weft-network-proto module from GitHub. The
-# repo's go.mod has `replace ../weft-network-proto` for local dev ;
-# we strip that replace so the docker build resolves the import via
-# the module cache instead. ./vendor/ would be an alternative — pick
-# this path so the host's go.sum stays authoritative.
 WORKDIR /src
 COPY go.mod go.sum ./
-RUN sed -i '/^replace /d' go.mod && go mod download
-
-COPY . .
-# Drop the replace again after copying the rest of the source.
-RUN sed -i '/^replace /d' go.mod
+COPY vendor/ ./vendor/
+COPY cmd/ ./cmd/
+COPY internal/ ./internal/
 
 ARG VERSION=dev
 ARG COMMIT=none
 ARG DATE=unknown
 
 RUN CGO_ENABLED=0 GOOS=linux go build \
+      -mod=vendor \
       -trimpath \
       -ldflags "-s -w \
                 -X main.version=${VERSION} \
@@ -54,9 +56,8 @@ FROM scratch
 COPY --from=build /out/weft-network /weft-network
 
 # Default listen : tcp on :7700 inside the container. Override with
-# the --listen flag at run time (or with the WEFT_NETWORK_LISTEN env
-# pattern the daemon may grow later). Unix sockets require a host
-# mount to be useful from a container.
+# the --listen flag at run time. Unix sockets require a host mount
+# to be useful from a container.
 EXPOSE 7700
 ENTRYPOINT ["/weft-network"]
 CMD ["--listen", "tcp::7700"]

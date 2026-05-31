@@ -3,6 +3,11 @@
 /weft-network-linux-*
 /weft-network-darwin-*
 
+# Vendor tree — generated on-demand by the docker build (CI runs
+# `go mod vendor` before `docker build`, locally the same command
+# produces it). Not tracked so the source-of-truth stays go.sum.
+/vendor/
+
 # Editor
 .vscode/
 .idea/
