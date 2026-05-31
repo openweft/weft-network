@@ -156,12 +156,14 @@ func run(cmd *cobra.Command, o runOpts) error {
 	// any TLS misconfig is a hard startup error (no silent fallback
 	// to insecure — see internal/tlsutil).
 	grpcOpts := []grpc.ServerOption{grpc.UnaryInterceptor(rec.UnaryInterceptor())}
+	var tlsReloader tlsutil.Reloader
 	if !tlsOpts.Empty() {
-		creds, err := tlsutil.ServerCredentials(tlsOpts)
+		creds, reloader, err := tlsutil.ServerCredentialsWithReloader(tlsOpts)
 		if err != nil {
 			return fmt.Errorf("tls : %w", err)
 		}
 		grpcOpts = append(grpcOpts, grpc.Creds(creds))
+		tlsReloader = reloader
 	} else if network == "tcp" {
 		// Anonymous tcp listen is allowed for dev but loud — the
 		// operator opted out of transport security ; surface it so
@@ -177,6 +179,24 @@ func run(cmd *cobra.Command, o runOpts) error {
 	// scrape-side issue can't take down the control plane.
 	ctx, stop := signal.NotifyContext(cmd.Context(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	// SIGHUP → TLS cert reload. Operator's certbot post-renewal hook
+	// drops the new cert/key in place + sends SIGHUP ; the loader
+	// re-reads on the next handshake. No restart, no in-flight RPC
+	// loss. Insecure-mode daemons swallow the signal harmlessly.
+	if tlsReloader != nil {
+		hup := make(chan os.Signal, 1)
+		signal.Notify(hup, syscall.SIGHUP)
+		go func() {
+			for range hup {
+				if err := tlsReloader.Reload(); err != nil {
+					logger.Error("tls reload (SIGHUP) failed ; previous cert still served", "err", err)
+				} else {
+					logger.Info("tls reloaded on SIGHUP")
+				}
+			}
+		}()
+	}
 
 	var metricsSrv *http.Server
 	if o.metricsAddr != "" {

@@ -84,6 +84,22 @@ back to insecure when `--tls-cert` is set ; an operator who can't
 load the cert is better served by a refusing daemon than one
 silently accepting plaintext.
 
+### Cert rotation
+
+The daemon re-reads its cert + key files on **SIGHUP** :
+
+```sh
+# certbot post-renewal hook, /etc/letsencrypt/renewal-hooks/deploy/weft-network.sh
+install -m 0600 "$RENEWED_LINEAGE/fullchain.pem" /etc/weft/network.crt
+install -m 0600 "$RENEWED_LINEAGE/privkey.pem"   /etc/weft/network.key
+systemctl kill --signal=HUP weft-network
+```
+
+No restart, no in-flight RPC drops. The loader caches the parsed
+cert behind a RWMutex and refreshes it from disk on every SIGHUP ;
+a botched renewal (corrupt PEM) logs an error and keeps serving the
+previous cert until the next reload succeeds.
+
 The unit ships hardened — `NoNewPrivileges`, `ProtectSystem=strict`,
 seccomp `@system-service` filter. Loosen only when you wire a
 local-fs backend that needs broader file access.

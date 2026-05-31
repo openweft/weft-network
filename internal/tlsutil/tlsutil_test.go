@@ -99,6 +99,52 @@ func TestServerCredentials_ValidationErrors(t *testing.T) {
 	}
 }
 
+func TestServerCredentials_ReloaderSwapsCertOnSighupEquivalent(t *testing.T) {
+	dir := t.TempDir()
+	certPath, keyPath := writeSelfSignedCert(t, dir)
+
+	_, reloader, err := ServerCredentialsWithReloader(Options{
+		CertFile: certPath, KeyFile: keyPath,
+	})
+	if err != nil {
+		t.Fatalf("ServerCredentialsWithReloader : %v", err)
+	}
+	if reloader == nil {
+		t.Fatal("expected non-nil Reloader for TLS-mode Options")
+	}
+
+	// Overwrite the cert file in place with a fresh self-signed pair.
+	// SIGHUP equivalent : Reload() re-reads from the same paths.
+	newCertPath, newKeyPath := writeSelfSignedCert(t, dir)
+	if err := os.Rename(newCertPath, certPath); err != nil {
+		t.Fatalf("rename new cert : %v", err)
+	}
+	if err := os.Rename(newKeyPath, keyPath); err != nil {
+		t.Fatalf("rename new key : %v", err)
+	}
+
+	if err := reloader.Reload(); err != nil {
+		t.Errorf("Reload after on-disk rotation : %v", err)
+	}
+
+	// Corrupt the cert + reload should error loudly (operator's
+	// renewal script botched it ; daemon must keep serving the
+	// previous cert and surface the error).
+	if err := os.WriteFile(certPath, []byte("not a pem"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := reloader.Reload(); err == nil {
+		t.Error("Reload of corrupt cert should error ; got nil")
+	}
+}
+
+func TestServerCredentialsWithReloader_EmptyOpts(t *testing.T) {
+	_, _, err := ServerCredentialsWithReloader(Options{})
+	if err == nil || !strings.Contains(err.Error(), "no cert configured") {
+		t.Errorf("empty Options → ServerCredentialsWithReloader returned %v ; want clear error", err)
+	}
+}
+
 func TestServerCredentials_BadClientCA(t *testing.T) {
 	dir := t.TempDir()
 	certPath, keyPath := writeSelfSignedCert(t, dir)
