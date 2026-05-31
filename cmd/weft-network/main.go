@@ -26,7 +26,9 @@ import (
 	"github.com/openweft/weft-network/internal/metrics"
 	"github.com/openweft/weft-network/internal/server"
 	"github.com/openweft/weft-network/internal/tlsutil"
+	"github.com/openweft/weft-network/internal/tracing"
 	"github.com/spf13/cobra"
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 
 	netv1 "github.com/openweft/weft-network-proto"
@@ -55,6 +57,8 @@ func newRootCmd() *cobra.Command {
 		tlsCertFile  string
 		tlsKeyFile   string
 		clientCAFile string
+		otlpEndpoint string
+		otlpInsecure bool
 	)
 	cmd := &cobra.Command{
 		Use:   "weft-network",
@@ -77,6 +81,8 @@ etcd-connected gauge) on a separate listener.`,
 				tlsCertFile:  tlsCertFile,
 				tlsKeyFile:   tlsKeyFile,
 				clientCAFile: clientCAFile,
+				otlpEndpoint: otlpEndpoint,
+				otlpInsecure: otlpInsecure,
 			})
 		},
 	}
@@ -94,6 +100,12 @@ etcd-connected gauge) on a separate listener.`,
 		"PEM-encoded server private key. Required when --tls-cert is set.")
 	f.StringVar(&clientCAFile, "client-ca", "",
 		"PEM-encoded CA bundle for client cert verification. Sets the server to mTLS-required mode ; unset = anonymous clients.")
+	// Tracing knobs. Env-var sourced so the systemd unit can flip them
+	// via /etc/default/weft-network without editing flags.
+	f.StringVar(&otlpEndpoint, "otlp-endpoint", os.Getenv("WEFT_NETWORK_OTLP_ENDPOINT"),
+		"OTLP/gRPC trace collector endpoint (host:port). Empty disables tracing. Defaults to $WEFT_NETWORK_OTLP_ENDPOINT.")
+	f.BoolVar(&otlpInsecure, "otlp-insecure", true,
+		"Skip TLS on the OTLP push connection. Fine inside the WireGuard mesh ; flip off when pointing at a TLS-fronted collector.")
 	return cmd
 }
 
@@ -107,6 +119,8 @@ type runOpts struct {
 	tlsCertFile  string
 	tlsKeyFile   string
 	clientCAFile string
+	otlpEndpoint string
+	otlpInsecure bool
 }
 
 func run(cmd *cobra.Command, o runOpts) error {
@@ -118,7 +132,31 @@ func run(cmd *cobra.Command, o runOpts) error {
 	}
 	logger.Info("starting weft-network",
 		"version", version, "commit", commit, "date", date,
-		"listen", o.listen, "etcd", o.etcdURL, "tls", tlsOpts.Mode())
+		"listen", o.listen, "etcd", o.etcdURL, "tls", tlsOpts.Mode(),
+		"otlp", o.otlpEndpoint)
+
+	// Tracing is best-effort : exporter init runs against the boot
+	// context so it gets cancelled along with everything else, and
+	// errors are logged + swallowed so a missing collector never
+	// blocks the control plane. The empty-endpoint case is a no-op
+	// inside Init.
+	traceShutdown, err := tracing.Init(cmd.Context(), tracing.Options{
+		OTLPEndpoint: o.otlpEndpoint,
+		Insecure:     o.otlpInsecure,
+		ServiceName:  "weft-network",
+		Version:      version,
+	})
+	if err != nil {
+		logger.Warn("tracing init failed ; continuing without traces", "err", err)
+		traceShutdown = func(context.Context) error { return nil }
+	}
+	defer func() {
+		shutCtx, cancel := context.WithTimeout(context.Background(), tracing.ShutdownTimeout)
+		defer cancel()
+		if err := traceShutdown(shutCtx); err != nil {
+			logger.Warn("tracing shutdown", "err", err)
+		}
+	}()
 
 	network, addr, err := parseListen(o.listen)
 	if err != nil {
@@ -150,12 +188,23 @@ func run(cmd *cobra.Command, o runOpts) error {
 	rec := metrics.New(version, commit, date)
 	rec.SetEtcdConnected(o.etcdURL != "")
 
-	// gRPC server options : interceptor wraps every method so adding
-	// a new RPC to the proto records counters automatically. TLS
-	// creds are wired only when --tls-cert + --tls-key are set ;
+	// gRPC server options. Order matters for readability, not
+	// correctness :
+	//
+	//   - otelgrpc.NewServerHandler is a StatsHandler — it opens a
+	//     span per RPC and is a no-op when the global tracer provider
+	//     is otel's noop (i.e. --otlp-endpoint empty), so we install
+	//     it unconditionally.
+	//   - The Prometheus interceptor wraps every method so adding a
+	//     new RPC to the proto records counters automatically.
+	//
+	// TLS creds are wired only when --tls-cert + --tls-key are set ;
 	// any TLS misconfig is a hard startup error (no silent fallback
 	// to insecure — see internal/tlsutil).
-	grpcOpts := []grpc.ServerOption{grpc.UnaryInterceptor(rec.UnaryInterceptor())}
+	grpcOpts := []grpc.ServerOption{
+		grpc.StatsHandler(otelgrpc.NewServerHandler()),
+		grpc.UnaryInterceptor(rec.UnaryInterceptor()),
+	}
 	var tlsReloader tlsutil.Reloader
 	if !tlsOpts.Empty() {
 		creds, reloader, err := tlsutil.ServerCredentialsWithReloader(tlsOpts)

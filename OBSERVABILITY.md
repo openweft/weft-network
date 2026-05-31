@@ -130,6 +130,46 @@ curl -fsS http://127.0.0.1:9100/healthz
 
 ## Tracing
 
-OpenTelemetry / OTLP : not wired yet. Planned to land alongside
-the agent-side OTLP exporter that the rest of the openweft platform
-uses ; the gRPC interceptor scaffolding is where it'll plug in.
+OpenTelemetry / OTLP is wired through `internal/tracing`. Every
+NetworkControlPlane RPC is wrapped by `otelgrpc.NewServerHandler()`
+(installed as a `grpc.StatsHandler` on the gRPC server) so adding a
+new RPC to the proto is automatically traced — no per-method
+instrumentation needed.
+
+Enable it by pointing the daemon at an OTLP/gRPC collector :
+
+```sh
+weft-network \
+  --otlp-endpoint=tempo.weft.internal:4317 \
+  --listen=unix:///run/weft-network/weft-network.sock
+```
+
+| Flag                  | Env var                          | Default | What it does                                                                                       |
+| --------------------- | -------------------------------- | ------- | -------------------------------------------------------------------------------------------------- |
+| `--otlp-endpoint`     | `WEFT_NETWORK_OTLP_ENDPOINT`     | empty   | OTLP/gRPC collector address `host:port`. Empty disables tracing (a no-op tracer provider is installed). |
+| `--otlp-insecure`     | —                                | `true`  | Skip TLS on the OTLP push connection. Fine inside the WireGuard mesh ; flip off for TLS-fronted collectors. |
+
+### Shape
+
+- **Resource attributes** : `service.name=weft-network`,
+  `service.version=<build-stamp>`. Both are attached to every span,
+  so the collector groups + filters trivially.
+- **Pipeline** : `BatchSpanProcessor` → `otlptracegrpc` exporter →
+  the configured collector. Batching means a slow collector can't
+  block the hot path — the BSP flushes asynchronously.
+- **Shutdown** : SIGTERM triggers a 10 s flush before exit, so the
+  last batch of spans makes it out the door on graceful stop.
+
+### Pointing it at common backends
+
+- **Tempo** : `--otlp-endpoint=<tempo-host>:4317` (Tempo's distributor
+  defaults to that port).
+- **Jaeger** (with the OTLP receiver, Jaeger v1.35+) :
+  `--otlp-endpoint=<jaeger-host>:4317`.
+- **OTLP-compatible vendor** (Honeycomb, Lightstep, Datadog OTLP
+  receiver, etc.) : `--otlp-endpoint=<vendor-host>:4317` and flip
+  `--otlp-insecure=false` to enable TLS.
+
+Tracing is best-effort : a misconfigured endpoint or unreachable
+collector logs a warning at boot and the daemon keeps serving. The
+control plane never fails open because traces aren't landing.

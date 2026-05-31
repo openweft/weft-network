@@ -67,7 +67,23 @@ WEFT_NETWORK_LOG=info
 WEFT_NETWORK_TLS_CERT=/etc/weft/network.crt
 WEFT_NETWORK_TLS_KEY=/etc/weft/network.key
 WEFT_NETWORK_CLIENT_CA=/etc/weft/clients-ca.pem    # set for mTLS
+
+# Tracing — OTLP/gRPC collector. Empty = disabled (default).
+WEFT_NETWORK_OTLP_ENDPOINT=tempo.weft.internal:4317
 ```
+
+### Environment variables
+
+| Env var                        | Flag              | Default                                       | Notes                                                                                         |
+| ------------------------------ | ----------------- | --------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `WEFT_NETWORK_LISTEN`          | `--listen`        | `unix:///run/weft-network/weft-network.sock`  | `unix:///path` or `tcp:host:port`.                                                            |
+| `WEFT_NETWORK_METRICS`         | `--metrics-addr`  | `127.0.0.1:9100`                              | Prometheus `/metrics` + `/healthz` listener. Empty disables.                                  |
+| `WEFT_NETWORK_ETCD`            | `--etcd`          | empty (in-memory)                             | Comma-separated etcd endpoints. Empty = in-memory dev mode.                                   |
+| `WEFT_NETWORK_LOG`             | `--log-level`     | `info`                                        | `debug` / `info` / `warn` / `error`.                                                          |
+| `WEFT_NETWORK_TLS_CERT`        | `--tls-cert`      | empty                                         | PEM server cert. Pairs with `--tls-key`.                                                      |
+| `WEFT_NETWORK_TLS_KEY`         | `--tls-key`       | empty                                         | PEM server key.                                                                               |
+| `WEFT_NETWORK_CLIENT_CA`       | `--client-ca`     | empty                                         | PEM CA bundle ; flips the listener into mTLS-required.                                        |
+| `WEFT_NETWORK_OTLP_ENDPOINT`   | `--otlp-endpoint` | empty (tracing off)                           | OTLP/gRPC collector `host:port`. See `OBSERVABILITY.md` for the full tracing wiring.          |
 
 ## TLS modes
 

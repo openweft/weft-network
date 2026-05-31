@@ -40,6 +40,10 @@ Environment="WEFT_NETWORK_LOG=info"
 Environment="WEFT_NETWORK_TLS_CERT="
 Environment="WEFT_NETWORK_TLS_KEY="
 Environment="WEFT_NETWORK_CLIENT_CA="
+# Tracing — OTLP/gRPC collector endpoint. Empty = disabled (default).
+# Point at Tempo, Jaeger's OTLP receiver, or any OTLP-compatible vendor.
+# Example : WEFT_NETWORK_OTLP_ENDPOINT=tempo.weft.internal:4317
+Environment="WEFT_NETWORK_OTLP_ENDPOINT="
 
 # The pre-start step prepares /run/weft-network with the right perms.
 # RuntimeDirectory= would also work but ExecStartPre is portable to
@@ -50,13 +54,14 @@ StateDirectory=weft-network
 StateDirectoryMode=0750
 
 ExecStart=/usr/local/bin/weft-network \
-  --listen       "${WEFT_NETWORK_LISTEN}" \
-  --metrics-addr "${WEFT_NETWORK_METRICS}" \
-  --etcd         "${WEFT_NETWORK_ETCD}" \
-  --log-level    "${WEFT_NETWORK_LOG}" \
-  --tls-cert     "${WEFT_NETWORK_TLS_CERT}" \
-  --tls-key      "${WEFT_NETWORK_TLS_KEY}" \
-  --client-ca    "${WEFT_NETWORK_CLIENT_CA}"
+  --listen        "${WEFT_NETWORK_LISTEN}" \
+  --metrics-addr  "${WEFT_NETWORK_METRICS}" \
+  --etcd          "${WEFT_NETWORK_ETCD}" \
+  --log-level     "${WEFT_NETWORK_LOG}" \
+  --tls-cert      "${WEFT_NETWORK_TLS_CERT}" \
+  --tls-key       "${WEFT_NETWORK_TLS_KEY}" \
+  --client-ca     "${WEFT_NETWORK_CLIENT_CA}" \
+  --otlp-endpoint "${WEFT_NETWORK_OTLP_ENDPOINT}"
 
 # Cooperative reload : SIGHUP is reserved for future config re-read.
 # Today only SIGTERM is honoured (daemon GracefulStop's the gRPC server).
