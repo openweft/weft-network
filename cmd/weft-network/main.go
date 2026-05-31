@@ -95,11 +95,18 @@ func run(cmd *cobra.Command, listen, etcdURL, logLevel string) error {
 	}
 	defer lis.Close()
 
-	srv := grpc.NewServer()
-	netv1.RegisterNetworkControlPlaneServer(srv, server.New(server.Options{
+	netServer := server.New(server.Options{
 		Logger:  logger,
 		EtcdURL: etcdURL,
-	}))
+	})
+	defer func() {
+		if err := netServer.Close(); err != nil {
+			logger.Warn("server close", "err", err)
+		}
+	}()
+
+	srv := grpc.NewServer()
+	netv1.RegisterNetworkControlPlaneServer(srv, netServer)
 	logger.Info("gRPC server registered ; awaiting connections", "addr", lis.Addr().String())
 
 	// Cooperative shutdown : SIGINT / SIGTERM triggers GracefulStop so
