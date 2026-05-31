@@ -28,6 +28,9 @@ Group=weft
 EnvironmentFile=-/etc/default/weft-network
 
 Environment="WEFT_NETWORK_LISTEN=unix:///run/weft-network/weft-network.sock"
+# Bind to localhost ; expose via WireGuard / loadbalancer in production
+# so Prometheus scrapes don't leak outside the cluster mesh.
+Environment="WEFT_NETWORK_METRICS=127.0.0.1:9100"
 Environment="WEFT_NETWORK_ETCD="
 Environment="WEFT_NETWORK_LOG=info"
 
@@ -40,9 +43,10 @@ StateDirectory=weft-network
 StateDirectoryMode=0750
 
 ExecStart=/usr/local/bin/weft-network \
-  --listen "${WEFT_NETWORK_LISTEN}" \
-  --etcd   "${WEFT_NETWORK_ETCD}" \
-  --log-level "${WEFT_NETWORK_LOG}"
+  --listen       "${WEFT_NETWORK_LISTEN}" \
+  --metrics-addr "${WEFT_NETWORK_METRICS}" \
+  --etcd         "${WEFT_NETWORK_ETCD}" \
+  --log-level    "${WEFT_NETWORK_LOG}"
 
 # Cooperative reload : SIGHUP is reserved for future config re-read.
 # Today only SIGTERM is honoured (daemon GracefulStop's the gRPC server).

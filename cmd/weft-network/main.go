@@ -4,23 +4,26 @@
 // data plane (WireGuard mesh, weft-agent's embedded Caddy, CoreDNS,
 // the agent's FirstFitScheduler).
 //
-// Today this is a SCAFFOLD : the gRPC server registers the
-// NetworkControlPlane service but every RPC returns codes.Unimplemented.
-// As individual RPCs get implemented (etcd backend + reconciler), the
-// dashboard's networking panels light up one at a time. The webui's
-// live-first pattern degrades to mock state on Unimplemented, so
-// partial rollout is safe.
+// All 16 RPCs from netv1.NetworkControlPlane are implemented. Backing
+// stores : in-memory (dev, no --etcd) or etcd-backed (production).
+// Observability via /metrics — Prometheus on a separate port from
+// the gRPC listener so the scrape surface doesn't share fate with
+// the control plane.
 package main
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
+	"github.com/openweft/weft-network/internal/metrics"
 	"github.com/openweft/weft-network/internal/server"
 	"github.com/spf13/cobra"
 	"google.golang.org/grpc"
@@ -44,9 +47,10 @@ func main() {
 
 func newRootCmd() *cobra.Command {
 	var (
-		listen   string
-		etcdURL  string
-		logLevel string
+		listen      string
+		metricsAddr string
+		etcdURL     string
+		logLevel    string
 	)
 	cmd := &cobra.Command{
 		Use:   "weft-network",
@@ -55,24 +59,27 @@ func newRootCmd() *cobra.Command {
 data plane. Runs as one infra microVM per DC ; etcd-elected leader owns
 the reconciler, followers serve read-only snapshots and forward writes.
 
-This is a scaffold today : every RPC returns Unimplemented. The webui's
-live-first pattern degrades gracefully, so individual RPCs can be wired
-incrementally without breaking the dashboard.`,
+All 16 NetworkControlPlane RPCs are implemented. Backing stores are
+in-memory by default ; pass --etcd to persist. The /metrics endpoint
+exposes Prometheus metrics (build info, RPC counters + latency,
+etcd-connected gauge) on a separate listener.`,
 		Version: version + " (" + commit + " " + date + ")",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return run(cmd, listen, etcdURL, logLevel)
+			return run(cmd, listen, metricsAddr, etcdURL, logLevel)
 		},
 	}
 	f := cmd.Flags()
 	f.StringVar(&listen, "listen", "unix:///var/run/weft-network/weft-network.sock",
 		"gRPC listen address ; supports unix:///path or tcp:host:port")
+	f.StringVar(&metricsAddr, "metrics-addr", ":9100",
+		"Prometheus /metrics listen address ; empty disables. tcp:host:port shape.")
 	f.StringVar(&etcdURL, "etcd", "",
 		"etcd endpoints (comma-separated). Empty = in-memory state (dev only).")
 	f.StringVar(&logLevel, "log-level", "info", "log level : debug / info / warn / error")
 	return cmd
 }
 
-func run(cmd *cobra.Command, listen, etcdURL, logLevel string) error {
+func run(cmd *cobra.Command, listen, metricsAddr, etcdURL, logLevel string) error {
 	logger := newLogger(logLevel)
 	logger.Info("starting weft-network",
 		"version", version, "commit", commit, "date", date,
@@ -105,17 +112,53 @@ func run(cmd *cobra.Command, listen, etcdURL, logLevel string) error {
 		}
 	}()
 
-	srv := grpc.NewServer()
+	rec := metrics.New(version, commit, date)
+	rec.SetEtcdConnected(etcdURL != "")
+
+	// gRPC interceptor records every RPC ; the interceptor wraps
+	// every method on netv1.NetworkControlPlaneServer transparently.
+	srv := grpc.NewServer(grpc.UnaryInterceptor(rec.UnaryInterceptor()))
 	netv1.RegisterNetworkControlPlaneServer(srv, netServer)
 	logger.Info("gRPC server registered ; awaiting connections", "addr", lis.Addr().String())
 
-	// Cooperative shutdown : SIGINT / SIGTERM triggers GracefulStop so
-	// in-flight RPCs finish before exit.
+	// /metrics on its own listener — separate fate from gRPC so a
+	// scrape-side issue can't take down the control plane.
 	ctx, stop := signal.NotifyContext(cmd.Context(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	var metricsSrv *http.Server
+	if metricsAddr != "" {
+		mux := http.NewServeMux()
+		mux.Handle("/metrics", rec.Handler())
+		mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("ok\n"))
+		})
+		metricsSrv = &http.Server{
+			Addr:              metricsAddr,
+			Handler:           mux,
+			ReadHeaderTimeout: 5 * time.Second,
+		}
+		go func() {
+			logger.Info("metrics listener", "addr", metricsAddr)
+			if err := metricsSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				logger.Error("metrics serve", "err", err)
+			}
+		}()
+	}
+
+	// Cooperative shutdown : SIGINT / SIGTERM triggers GracefulStop so
+	// in-flight RPCs finish before exit. Metrics HTTP listener stops
+	// in parallel ; the 5s shutdown bound is plenty for an idle
+	// scrape connection to drain.
 	go func() {
 		<-ctx.Done()
 		logger.Info("signal received ; graceful stop")
+		if metricsSrv != nil {
+			shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = metricsSrv.Shutdown(shutCtx)
+		}
 		srv.GracefulStop()
 	}()
 

@@ -58,6 +58,6 @@ COPY --from=build /out/weft-network /weft-network
 # Default listen : tcp on :7700 inside the container. Override with
 # the --listen flag at run time. Unix sockets require a host mount
 # to be useful from a container.
-EXPOSE 7700
+EXPOSE 7700 9100
 ENTRYPOINT ["/weft-network"]
-CMD ["--listen", "tcp::7700"]
+CMD ["--listen", "tcp::7700", "--metrics-addr", ":9100"]
