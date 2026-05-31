@@ -1,0 +1,75 @@
+# weft-network.service — systemd unit for the network control-plane daemon.
+#
+# Install :
+#   - copy the weft-network binary to /usr/local/bin/weft-network
+#   - copy this file to /etc/systemd/system/weft-network.service
+#   - create the runtime + state dirs : `weft-network-prepare` (below)
+#   - systemctl daemon-reload && systemctl enable --now weft-network
+#
+# Configure via /etc/default/weft-network — see the EnvironmentFile
+# directive below. Key knobs :
+#   WEFT_NETWORK_LISTEN — defaults to a unix socket under /run.
+#   WEFT_NETWORK_ETCD   — empty = in-memory dev ; set for HA.
+#   WEFT_NETWORK_LOG    — debug / info / warn / error.
+
+[Unit]
+Description=openweft network control-plane (routers / LBs / DNS / scheduling)
+Documentation=https://openweft.github.io/docs/latest/
+After=network-online.target etcd.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=weft
+Group=weft
+
+# Defaults can be tuned in /etc/default/weft-network without editing
+# this unit file. Missing file = use the daemon's own defaults.
+EnvironmentFile=-/etc/default/weft-network
+
+Environment="WEFT_NETWORK_LISTEN=unix:///run/weft-network/weft-network.sock"
+Environment="WEFT_NETWORK_ETCD="
+Environment="WEFT_NETWORK_LOG=info"
+
+# The pre-start step prepares /run/weft-network with the right perms.
+# RuntimeDirectory= would also work but ExecStartPre is portable to
+# older systemd that doesn't ship the same RuntimeDirectoryMode logic.
+RuntimeDirectory=weft-network
+RuntimeDirectoryMode=0750
+StateDirectory=weft-network
+StateDirectoryMode=0750
+
+ExecStart=/usr/local/bin/weft-network \
+  --listen "${WEFT_NETWORK_LISTEN}" \
+  --etcd   "${WEFT_NETWORK_ETCD}" \
+  --log-level "${WEFT_NETWORK_LOG}"
+
+# Cooperative reload : SIGHUP is reserved for future config re-read.
+# Today only SIGTERM is honoured (daemon GracefulStop's the gRPC server).
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=30s
+Restart=on-failure
+RestartSec=5s
+
+# Hardening — tight enough for a stateless daemon. Loosen only if
+# you wire a local-fs backend or attach to a custom path.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target
