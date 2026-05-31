@@ -9,11 +9,15 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// All RPCs must return codes.Unimplemented in the scaffold. This pins
-// the contract so a future "I'll just return an empty response"
-// shortcut can't silently lie to the webui (which only swaps from
-// mock to live on Unimplemented).
-func TestServer_AllRPCsUnimplemented(t *testing.T) {
+// RPCs still returning codes.Unimplemented are pinned here. As each
+// gets wired, move its case out of this table and add coverage in
+// the appropriate <domain>_test.go.
+//
+// Why this matters : the webui's live-first pattern only swaps from
+// mock to live on Unimplemented. A future "I'll just return an empty
+// response" shortcut would silently lie to the dashboard. This test
+// catches that.
+func TestServer_StillUnimplemented(t *testing.T) {
 	s := New(Options{})
 	ctx := context.Background()
 
@@ -71,18 +75,6 @@ func TestServer_AllRPCsUnimplemented(t *testing.T) {
 		}},
 		{"DeleteDNSRecord", func() error {
 			_, err := s.DeleteDNSRecord(ctx, &netv1.DeleteDNSRecordRequest{})
-			return err
-		}},
-		{"ListSchedulingRules", func() error {
-			_, err := s.ListSchedulingRules(ctx, &netv1.ListSchedulingRulesRequest{})
-			return err
-		}},
-		{"CreateSchedulingRule", func() error {
-			_, err := s.CreateSchedulingRule(ctx, &netv1.CreateSchedulingRuleRequest{})
-			return err
-		}},
-		{"DeleteSchedulingRule", func() error {
-			_, err := s.DeleteSchedulingRule(ctx, &netv1.DeleteSchedulingRuleRequest{})
 			return err
 		}},
 	}
