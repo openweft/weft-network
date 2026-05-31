@@ -53,30 +53,6 @@ func TestServer_StillUnimplemented(t *testing.T) {
 			_, err := s.SetLoadBalancerBackends(ctx, &netv1.SetLoadBalancerBackendsRequest{})
 			return err
 		}},
-		{"ListDNSZones", func() error {
-			_, err := s.ListDNSZones(ctx, &netv1.ListDNSZonesRequest{})
-			return err
-		}},
-		{"CreateDNSZone", func() error {
-			_, err := s.CreateDNSZone(ctx, &netv1.CreateDNSZoneRequest{})
-			return err
-		}},
-		{"DeleteDNSZone", func() error {
-			_, err := s.DeleteDNSZone(ctx, &netv1.DeleteDNSZoneRequest{})
-			return err
-		}},
-		{"ListDNSRecords", func() error {
-			_, err := s.ListDNSRecords(ctx, &netv1.ListDNSRecordsRequest{})
-			return err
-		}},
-		{"CreateDNSRecord", func() error {
-			_, err := s.CreateDNSRecord(ctx, &netv1.CreateDNSRecordRequest{})
-			return err
-		}},
-		{"DeleteDNSRecord", func() error {
-			_, err := s.DeleteDNSRecord(ctx, &netv1.DeleteDNSRecordRequest{})
-			return err
-		}},
 	}
 
 	for _, c := range cases {

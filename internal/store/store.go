@@ -11,11 +11,15 @@
 // memory and etcd backends across the daemon.
 package store
 
-import "github.com/openweft/weft-network/internal/store/scheduling"
+import (
+	"github.com/openweft/weft-network/internal/store/dns"
+	"github.com/openweft/weft-network/internal/store/scheduling"
+)
 
 // Stores aggregates one backend per domain. The daemon wires them
 // once at startup ; handlers consume the interfaces and don't care
 // about the impl.
 type Stores struct {
 	SchedulingRules scheduling.Store
+	DNS             dns.Store
 }
