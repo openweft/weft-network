@@ -10,6 +10,7 @@ import (
 	netv1 "github.com/openweft/weft-network-proto"
 	"github.com/openweft/weft-network/internal/store"
 	"github.com/openweft/weft-network/internal/store/dns"
+	"github.com/openweft/weft-network/internal/store/lb"
 	"github.com/openweft/weft-network/internal/store/router"
 	"github.com/openweft/weft-network/internal/store/scheduling"
 )
@@ -50,6 +51,7 @@ func New(opts Options) *Server {
 			SchedulingRules: scheduling.NewMemory(),
 			DNS:             dns.NewMemory(),
 			Routers:         router.NewMemory(),
+			LBs:             lb.NewMemory(),
 		}
 	}
 	if opts.EtcdURL != "" {

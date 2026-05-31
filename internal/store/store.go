@@ -13,6 +13,7 @@ package store
 
 import (
 	"github.com/openweft/weft-network/internal/store/dns"
+	"github.com/openweft/weft-network/internal/store/lb"
 	"github.com/openweft/weft-network/internal/store/router"
 	"github.com/openweft/weft-network/internal/store/scheduling"
 )
@@ -24,4 +25,5 @@ type Stores struct {
 	SchedulingRules scheduling.Store
 	DNS             dns.Store
 	Routers         router.Store
+	LBs             lb.Store
 }
