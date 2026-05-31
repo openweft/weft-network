@@ -58,9 +58,31 @@ EnvironmentFile) without editing the unit :
 
 ```
 WEFT_NETWORK_LISTEN=unix:///run/weft-network/weft-network.sock
+WEFT_NETWORK_METRICS=127.0.0.1:9100
 WEFT_NETWORK_ETCD=https://etcd-1.weft.internal:2379,https://etcd-2.weft.internal:2379,https://etcd-3.weft.internal:2379
 WEFT_NETWORK_LOG=info
+
+# TLS — set when listening on TCP. Leave empty on unix-socket
+# deployments (filesystem perms gate access).
+WEFT_NETWORK_TLS_CERT=/etc/weft/network.crt
+WEFT_NETWORK_TLS_KEY=/etc/weft/network.key
+WEFT_NETWORK_CLIENT_CA=/etc/weft/clients-ca.pem    # set for mTLS
 ```
+
+## TLS modes
+
+The daemon supports three transport postures, all opt-in :
+
+| Mode      | --tls-cert + --tls-key | --client-ca | When to use                                                                     |
+| --------- | :--------------------: | :---------: | ------------------------------------------------------------------------------- |
+| insecure  | unset                  | unset       | Unix socket only — filesystem perms = security. Default for the systemd unit.   |
+| TLS       | set                    | unset       | TCP listener inside the WireGuard mesh — clients connect anonymously, network membership = trust. |
+| mTLS      | set                    | set         | Cross-DC TCP listener — clients must present a cert chained to the CA bundle.   |
+
+Misconfigured TLS is a hard startup error. The daemon never falls
+back to insecure when `--tls-cert` is set ; an operator who can't
+load the cert is better served by a refusing daemon than one
+silently accepting plaintext.
 
 The unit ships hardened — `NoNewPrivileges`, `ProtectSystem=strict`,
 seccomp `@system-service` filter. Loosen only when you wire a

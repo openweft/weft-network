@@ -25,6 +25,7 @@ import (
 
 	"github.com/openweft/weft-network/internal/metrics"
 	"github.com/openweft/weft-network/internal/server"
+	"github.com/openweft/weft-network/internal/tlsutil"
 	"github.com/spf13/cobra"
 	"google.golang.org/grpc"
 
@@ -47,10 +48,13 @@ func main() {
 
 func newRootCmd() *cobra.Command {
 	var (
-		listen      string
-		metricsAddr string
-		etcdURL     string
-		logLevel    string
+		listen       string
+		metricsAddr  string
+		etcdURL      string
+		logLevel     string
+		tlsCertFile  string
+		tlsKeyFile   string
+		clientCAFile string
 	)
 	cmd := &cobra.Command{
 		Use:   "weft-network",
@@ -65,7 +69,15 @@ exposes Prometheus metrics (build info, RPC counters + latency,
 etcd-connected gauge) on a separate listener.`,
 		Version: version + " (" + commit + " " + date + ")",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return run(cmd, listen, metricsAddr, etcdURL, logLevel)
+			return run(cmd, runOpts{
+				listen:       listen,
+				metricsAddr:  metricsAddr,
+				etcdURL:      etcdURL,
+				logLevel:     logLevel,
+				tlsCertFile:  tlsCertFile,
+				tlsKeyFile:   tlsKeyFile,
+				clientCAFile: clientCAFile,
+			})
 		},
 	}
 	f := cmd.Flags()
@@ -76,18 +88,41 @@ etcd-connected gauge) on a separate listener.`,
 	f.StringVar(&etcdURL, "etcd", "",
 		"etcd endpoints (comma-separated). Empty = in-memory state (dev only).")
 	f.StringVar(&logLevel, "log-level", "info", "log level : debug / info / warn / error")
+	f.StringVar(&tlsCertFile, "tls-cert", "",
+		"PEM-encoded server certificate. Pair with --tls-key to enable TLS ; unset = insecure (unix-socket only).")
+	f.StringVar(&tlsKeyFile, "tls-key", "",
+		"PEM-encoded server private key. Required when --tls-cert is set.")
+	f.StringVar(&clientCAFile, "client-ca", "",
+		"PEM-encoded CA bundle for client cert verification. Sets the server to mTLS-required mode ; unset = anonymous clients.")
 	return cmd
 }
 
-func run(cmd *cobra.Command, listen, metricsAddr, etcdURL, logLevel string) error {
-	logger := newLogger(logLevel)
+// runOpts groups the parsed flag values so the run() signature stays
+// readable. Same shape as the cobra flag bindings ; one-to-one map.
+type runOpts struct {
+	listen       string
+	metricsAddr  string
+	etcdURL      string
+	logLevel     string
+	tlsCertFile  string
+	tlsKeyFile   string
+	clientCAFile string
+}
+
+func run(cmd *cobra.Command, o runOpts) error {
+	logger := newLogger(o.logLevel)
+	tlsOpts := tlsutil.Options{
+		CertFile:     o.tlsCertFile,
+		KeyFile:      o.tlsKeyFile,
+		ClientCAFile: o.clientCAFile,
+	}
 	logger.Info("starting weft-network",
 		"version", version, "commit", commit, "date", date,
-		"listen", listen, "etcd", etcdURL)
+		"listen", o.listen, "etcd", o.etcdURL, "tls", tlsOpts.Mode())
 
-	network, addr, err := parseListen(listen)
+	network, addr, err := parseListen(o.listen)
 	if err != nil {
-		return fmt.Errorf("parse --listen %q : %w", listen, err)
+		return fmt.Errorf("parse --listen %q : %w", o.listen, err)
 	}
 	if network == "unix" {
 		_ = os.Remove(addr)
@@ -104,7 +139,7 @@ func run(cmd *cobra.Command, listen, metricsAddr, etcdURL, logLevel string) erro
 
 	netServer := server.New(server.Options{
 		Logger:  logger,
-		EtcdURL: etcdURL,
+		EtcdURL: o.etcdURL,
 	})
 	defer func() {
 		if err := netServer.Close(); err != nil {
@@ -113,11 +148,28 @@ func run(cmd *cobra.Command, listen, metricsAddr, etcdURL, logLevel string) erro
 	}()
 
 	rec := metrics.New(version, commit, date)
-	rec.SetEtcdConnected(etcdURL != "")
+	rec.SetEtcdConnected(o.etcdURL != "")
 
-	// gRPC interceptor records every RPC ; the interceptor wraps
-	// every method on netv1.NetworkControlPlaneServer transparently.
-	srv := grpc.NewServer(grpc.UnaryInterceptor(rec.UnaryInterceptor()))
+	// gRPC server options : interceptor wraps every method so adding
+	// a new RPC to the proto records counters automatically. TLS
+	// creds are wired only when --tls-cert + --tls-key are set ;
+	// any TLS misconfig is a hard startup error (no silent fallback
+	// to insecure — see internal/tlsutil).
+	grpcOpts := []grpc.ServerOption{grpc.UnaryInterceptor(rec.UnaryInterceptor())}
+	if !tlsOpts.Empty() {
+		creds, err := tlsutil.ServerCredentials(tlsOpts)
+		if err != nil {
+			return fmt.Errorf("tls : %w", err)
+		}
+		grpcOpts = append(grpcOpts, grpc.Creds(creds))
+	} else if network == "tcp" {
+		// Anonymous tcp listen is allowed for dev but loud — the
+		// operator opted out of transport security ; surface it so
+		// it doesn't slip into production unnoticed.
+		logger.Warn("running gRPC over TCP without TLS ; clients connect anonymously",
+			"hint", "set --tls-cert + --tls-key for production deployments")
+	}
+	srv := grpc.NewServer(grpcOpts...)
 	netv1.RegisterNetworkControlPlaneServer(srv, netServer)
 	logger.Info("gRPC server registered ; awaiting connections", "addr", lis.Addr().String())
 
@@ -127,7 +179,7 @@ func run(cmd *cobra.Command, listen, metricsAddr, etcdURL, logLevel string) erro
 	defer stop()
 
 	var metricsSrv *http.Server
-	if metricsAddr != "" {
+	if o.metricsAddr != "" {
 		mux := http.NewServeMux()
 		mux.Handle("/metrics", rec.Handler())
 		mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
@@ -135,12 +187,12 @@ func run(cmd *cobra.Command, listen, metricsAddr, etcdURL, logLevel string) erro
 			_, _ = w.Write([]byte("ok\n"))
 		})
 		metricsSrv = &http.Server{
-			Addr:              metricsAddr,
+			Addr:              o.metricsAddr,
 			Handler:           mux,
 			ReadHeaderTimeout: 5 * time.Second,
 		}
 		go func() {
-			logger.Info("metrics listener", "addr", metricsAddr)
+			logger.Info("metrics listener", "addr", o.metricsAddr)
 			if err := metricsSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 				logger.Error("metrics serve", "err", err)
 			}

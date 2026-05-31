@@ -33,6 +33,13 @@ Environment="WEFT_NETWORK_LISTEN=unix:///run/weft-network/weft-network.sock"
 Environment="WEFT_NETWORK_METRICS=127.0.0.1:9100"
 Environment="WEFT_NETWORK_ETCD="
 Environment="WEFT_NETWORK_LOG=info"
+# TLS — only meaningful for TCP listeners. Leave empty when listening
+# on the default unix socket (filesystem perms gate access). Set all
+# three to require mTLS ; cert+key without client-ca = TLS, anonymous
+# clients.
+Environment="WEFT_NETWORK_TLS_CERT="
+Environment="WEFT_NETWORK_TLS_KEY="
+Environment="WEFT_NETWORK_CLIENT_CA="
 
 # The pre-start step prepares /run/weft-network with the right perms.
 # RuntimeDirectory= would also work but ExecStartPre is portable to
@@ -46,7 +53,10 @@ ExecStart=/usr/local/bin/weft-network \
   --listen       "${WEFT_NETWORK_LISTEN}" \
   --metrics-addr "${WEFT_NETWORK_METRICS}" \
   --etcd         "${WEFT_NETWORK_ETCD}" \
-  --log-level    "${WEFT_NETWORK_LOG}"
+  --log-level    "${WEFT_NETWORK_LOG}" \
+  --tls-cert     "${WEFT_NETWORK_TLS_CERT}" \
+  --tls-key      "${WEFT_NETWORK_TLS_KEY}" \
+  --client-ca    "${WEFT_NETWORK_CLIENT_CA}"
 
 # Cooperative reload : SIGHUP is reserved for future config re-read.
 # Today only SIGTERM is honoured (daemon GracefulStop's the gRPC server).
