@@ -25,18 +25,6 @@ func TestServer_StillUnimplemented(t *testing.T) {
 		name string
 		call func() error
 	}{
-		{"ListRouters", func() error {
-			_, err := s.ListRouters(ctx, &netv1.ListRoutersRequest{})
-			return err
-		}},
-		{"CreateRouter", func() error {
-			_, err := s.CreateRouter(ctx, &netv1.CreateRouterRequest{})
-			return err
-		}},
-		{"DeleteRouter", func() error {
-			_, err := s.DeleteRouter(ctx, &netv1.DeleteRouterRequest{})
-			return err
-		}},
 		{"ListLoadBalancers", func() error {
 			_, err := s.ListLoadBalancers(ctx, &netv1.ListLoadBalancersRequest{})
 			return err
