@@ -27,11 +27,16 @@ func TestRouters_CreateListDelete(t *testing.T) {
 		t.Errorf("fresh router status = %q ; want configuring", cr.GetRouter().GetStatus())
 	}
 
-	// egress router, default backend = vyos.
-	if _, err := s.CreateRouter(ctx, &netv1.CreateRouterRequest{
-		Project: "platform", Name: "egress-prod", Kind: "egress", External: "AS65000",
-	}); err != nil {
+	// egress router, default backend = gobgp (the weft-router micro-VM
+	// path ; vyos/frr stay accepted as classic-VM escape hatches).
+	er, err := s.CreateRouter(ctx, &netv1.CreateRouterRequest{
+		Project: "platform", Name: "egress-prod", Kind: "egress", External: "65000:198.51.100.1",
+	})
+	if err != nil {
 		t.Fatalf("CreateRouter egress : %v", err)
+	}
+	if er.GetRouter().GetBackend() != "gobgp" {
+		t.Errorf("default backend for egress = %q ; want gobgp", er.GetRouter().GetBackend())
 	}
 
 	ls, _ := s.ListRouters(ctx, &netv1.ListRoutersRequest{Project: "platform"})

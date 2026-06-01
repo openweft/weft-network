@@ -6,6 +6,7 @@
 package server
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -111,6 +112,29 @@ func (s *Server) Close() error {
 	err := s.etcdClient.Close()
 	s.etcdClient = nil
 	return err
+}
+
+// ResyncRouters republishes the desired-state for every router in the
+// store. Called once at daemon startup so a fresh weft-network with
+// pre-existing routers (etcd survives the restart, NATS does not) gets
+// the matching weft-router micro-VMs back in sync without needing an
+// operator edit.
+//
+// Best-effort : individual publish failures are logged and skipped, the
+// sweep continues so a single bad router doesn't block startup. Returns
+// the count of routers attempted ; the caller logs that.
+func (s *Server) ResyncRouters(ctx context.Context) (int, error) {
+	rs, err := s.stores.Routers.List(ctx, router.ListFilter{})
+	if err != nil {
+		return 0, fmt.Errorf("list routers: %w", err)
+	}
+	for _, r := range rs {
+		if err := s.publisher.Publish(ctx, r); err != nil {
+			s.logger.Warn("router resync publish failed",
+				"uuid", r.UUID, "kind", r.Kind, "backend", r.Backend, "err", err)
+		}
+	}
+	return len(rs), nil
 }
 
 // newEtcdClient parses the comma-separated endpoint list and dials.

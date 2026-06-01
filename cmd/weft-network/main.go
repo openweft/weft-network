@@ -211,6 +211,16 @@ func run(cmd *cobra.Command, o runOpts) error {
 		}
 	}()
 
+	// Initial resync : republish every router that's already in the
+	// store so a fresh weft-network with surviving etcd state gets the
+	// matching weft-router micro-VMs back in sync — NATS doesn't retain
+	// messages across our restart. Best-effort, doesn't fail startup.
+	if n, err := netServer.ResyncRouters(cmd.Context()); err != nil {
+		logger.Warn("router resync failed at startup", "err", err)
+	} else if n > 0 {
+		logger.Info("router resync done", "count", n)
+	}
+
 	rec := metrics.New(version, commit, date)
 	rec.SetEtcdConnected(o.etcdURL != "")
 
