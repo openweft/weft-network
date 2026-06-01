@@ -1,10 +1,11 @@
 // Package router persists Router resources : mesh ↔ mesh peering
-// (WireGuard) or mesh ↔ outside (VyOS / FRR BGP egress + NAT).
+// (WireGuard) or mesh ↔ outside (GoBGP micro-VM as the default egress
+// backend, VyOS / FRR classic VMs as the escape hatch).
 //
 // Today the store is the WHOLE backend — the data-plane reconciler
-// (WireGuard peer config push, BGP daemon programming) lands in a
-// follow-on commit. Implementing this domain is just CRUD with
-// kind / backend validation.
+// (WireGuard peer config push, GoBGP DesiredState publish on NATS via
+// internal/publisher) lands in a follow-on commit. Implementing this
+// domain is just CRUD with kind / backend validation.
 package router
 
 import (

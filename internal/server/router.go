@@ -14,9 +14,20 @@ import (
 
 // Kind / backend vocabularies. Reject early — the reconciler can't
 // negotiate with a router pointing at a backend it doesn't speak.
+//
+// Backend choice for kind=egress :
+//   - "gobgp" : default. Spawns a weft-router micro-VM running
+//     GoBGP + netlink — pure-Go data plane, micro-VM-scaled, fits
+//     the openweft microVM-first strategy.
+//   - "vyos" / "frr" : escape hatch for tenants that need
+//     multi-protocol routing (OSPF / IS-IS / RSVP-TE) or want to
+//     bring their own router-OS config. Distributed as VM images,
+//     run as classic VMs via `weft instance`, not micro-VMs.
+//
+// Peer routers (kind=peer) always use WireGuard ; no other backend fits.
 var (
 	validRouterKinds    = map[string]bool{"peer": true, "egress": true}
-	validRouterBackends = map[string]bool{"wireguard": true, "vyos": true, "frr": true}
+	validRouterBackends = map[string]bool{"wireguard": true, "gobgp": true, "vyos": true, "frr": true}
 )
 
 // ListRouters returns every router, optionally scoped to a project.
@@ -46,17 +57,20 @@ func (s *Server) CreateRouter(ctx context.Context, req *netv1.CreateRouterReques
 	}
 	backend := strings.TrimSpace(req.GetBackend())
 	if backend == "" {
-		// Sensible default per kind : peer → wireguard, egress → vyos.
-		// Operators override with backend="frr" for a Cisco-shop egress.
+		// Defaults per kind : peer → wireguard, egress → gobgp (the
+		// micro-VM Go-native data plane via weft-router). Operators
+		// override with backend="vyos" or "frr" only when they really
+		// need the classic-VM escape hatch (multi-protocol routing, BYO
+		// config). See the comment on validRouterBackends above.
 		switch kind {
 		case "peer":
 			backend = "wireguard"
 		case "egress":
-			backend = "vyos"
+			backend = "gobgp"
 		}
 	}
 	if !validRouterBackends[backend] {
-		return nil, status.Errorf(codes.InvalidArgument, "backend %q must be wireguard / vyos / frr", req.GetBackend())
+		return nil, status.Errorf(codes.InvalidArgument, "backend %q must be wireguard / gobgp / vyos / frr", req.GetBackend())
 	}
 	if kind == "peer" && len(req.GetNetworks()) < 1 {
 		return nil, status.Error(codes.InvalidArgument, "peer routers must list at least one network")
@@ -84,6 +98,16 @@ func (s *Server) CreateRouter(ctx context.Context, req *netv1.CreateRouterReques
 	}
 	s.logger.Info("router created",
 		"uuid", saved.UUID, "name", saved.Name, "kind", saved.Kind, "backend", saved.Backend)
+
+	// Push desired-state to weft-router. For kind=peer and non-gobgp
+	// egress, the publisher is a no-op (no weft-router micro-VM
+	// subscribes anyway). Failure to publish is logged but doesn't
+	// roll back the create — the store is the source of truth, the
+	// next operator action (or a follow-up reconciler loop) re-tries.
+	if err := s.publisher.Publish(ctx, saved); err != nil {
+		s.logger.Warn("router publish failed (state in store but not on NATS)",
+			"uuid", saved.UUID, "err", err)
+	}
 	return &netv1.CreateRouterResponse{Router: saved.ToProto()}, nil
 }
 
@@ -100,5 +124,10 @@ func (s *Server) DeleteRouter(ctx context.Context, req *netv1.DeleteRouterReques
 		return nil, status.Errorf(codes.Internal, "delete router : %v", err)
 	}
 	s.logger.Info("router deleted", "uuid", uuid)
+	// Withdraw the desired-state so a fresh weft-router micro-VM with
+	// the same uuid doesn't re-apply the deleted state. Best-effort.
+	if err := s.publisher.Withdraw(ctx, uuid); err != nil {
+		s.logger.Warn("router withdraw failed", "uuid", uuid, "err", err)
+	}
 	return &netv1.DeleteRouterResponse{}, nil
 }

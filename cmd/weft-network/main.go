@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/openweft/weft-network/internal/metrics"
+	"github.com/openweft/weft-network/internal/publisher"
 	"github.com/openweft/weft-network/internal/server"
 	"github.com/openweft/weft-network/internal/tlsutil"
 	"github.com/openweft/weft-network/internal/tracing"
@@ -53,6 +54,7 @@ func newRootCmd() *cobra.Command {
 		listen       string
 		metricsAddr  string
 		etcdURL      string
+		natsURL      string
 		logLevel     string
 		tlsCertFile  string
 		tlsKeyFile   string
@@ -77,6 +79,7 @@ etcd-connected gauge) on a separate listener.`,
 				listen:       listen,
 				metricsAddr:  metricsAddr,
 				etcdURL:      etcdURL,
+				natsURL:      natsURL,
 				logLevel:     logLevel,
 				tlsCertFile:  tlsCertFile,
 				tlsKeyFile:   tlsKeyFile,
@@ -93,6 +96,9 @@ etcd-connected gauge) on a separate listener.`,
 		"Prometheus /metrics listen address ; empty disables. tcp:host:port shape.")
 	f.StringVar(&etcdURL, "etcd", "",
 		"etcd endpoints (comma-separated). Empty = in-memory state (dev only).")
+	f.StringVar(&natsURL, "nats", "",
+		"NATS URL for the weft-router publisher (e.g. nats://nats.weft.internal:4222). "+
+			"Empty = Noop publisher (router CRUD persists but no DesiredState reaches micro-VMs).")
 	f.StringVar(&logLevel, "log-level", "info", "log level : debug / info / warn / error")
 	f.StringVar(&tlsCertFile, "tls-cert", "",
 		"PEM-encoded server certificate. Pair with --tls-key to enable TLS ; unset = insecure (unix-socket only).")
@@ -115,6 +121,7 @@ type runOpts struct {
 	listen       string
 	metricsAddr  string
 	etcdURL      string
+	natsURL      string
 	logLevel     string
 	tlsCertFile  string
 	tlsKeyFile   string
@@ -175,9 +182,28 @@ func run(cmd *cobra.Command, o runOpts) error {
 	}
 	defer lis.Close()
 
+	// Router publisher : NATS in prod, Noop when --nats is empty (so a
+	// single-host dev daemon doesn't refuse to start just because no
+	// NATS cluster is up). Failure to connect logs loudly and falls
+	// back to Noop ; the router CRUD still persists, the operator
+	// notices via "router publish failed" warnings on Create.
+	var routerPub publisher.RouterPublisher
+	if o.natsURL != "" {
+		np, err := publisher.NewNATS(logger, o.natsURL)
+		if err != nil {
+			logger.Error("nats publisher connect failed ; falling back to Noop",
+				"url", o.natsURL, "err", err)
+		} else {
+			routerPub = np
+			defer np.Close()
+			logger.Info("router publisher wired", "nats_url", o.natsURL)
+		}
+	}
+
 	netServer := server.New(server.Options{
-		Logger:  logger,
-		EtcdURL: o.etcdURL,
+		Logger:          logger,
+		EtcdURL:         o.etcdURL,
+		RouterPublisher: routerPub,
 	})
 	defer func() {
 		if err := netServer.Close(); err != nil {

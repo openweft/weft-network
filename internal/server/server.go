@@ -12,6 +12,7 @@ import (
 	"time"
 
 	netv1 "github.com/openweft/weft-network-proto"
+	"github.com/openweft/weft-network/internal/publisher"
 	"github.com/openweft/weft-network/internal/store"
 	"github.com/openweft/weft-network/internal/store/dns"
 	"github.com/openweft/weft-network/internal/store/lb"
@@ -23,8 +24,14 @@ import (
 // Options bundles construction inputs.
 type Options struct {
 	Logger  *slog.Logger
-	EtcdURL string       // comma-separated endpoints ; empty = in-memory (dev only)
+	EtcdURL string        // comma-separated endpoints ; empty = in-memory (dev only)
 	Stores  *store.Stores // explicit injection ; nil = build defaults from EtcdURL
+	// RouterPublisher pushes router desired-state on the per-tenant
+	// NATS subject weft-router micro-VMs subscribe to. nil = Noop
+	// (no-op + debug log), the default in tests and when NATS isn't
+	// wired. Production weft-network constructs a publisher.NATS in
+	// main and passes it here.
+	RouterPublisher publisher.RouterPublisher
 }
 
 // Server implements netv1.NetworkControlPlaneServer.
@@ -36,9 +43,10 @@ type Options struct {
 type Server struct {
 	netv1.UnimplementedNetworkControlPlaneServer
 
-	logger *slog.Logger
-	opts   Options
-	stores *store.Stores
+	logger    *slog.Logger
+	opts      Options
+	stores    *store.Stores
+	publisher publisher.RouterPublisher
 	// etcdClient is the live connection when EtcdURL is set ; Close
 	// must be called via Server.Close on shutdown so the watch
 	// goroutines and connections drain cleanly.
@@ -86,7 +94,11 @@ func New(opts Options) *Server {
 			}
 		}
 	}
-	return &Server{logger: opts.Logger, opts: opts, stores: stores, etcdClient: etcdClient}
+	pub := opts.RouterPublisher
+	if pub == nil {
+		pub = publisher.Noop{Log: opts.Logger}
+	}
+	return &Server{logger: opts.Logger, opts: opts, stores: stores, publisher: pub, etcdClient: etcdClient}
 }
 
 // Close releases the etcd connection when one was opened. Idempotent.
