@@ -74,3 +74,16 @@ func (s *memoryStore) Get(_ context.Context, uuid string) (Router, error) {
 	}
 	return r, nil
 }
+
+func (s *memoryStore) UpdateStatus(_ context.Context, uuid, status, peerState string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.byUUID[uuid]
+	if !ok {
+		return ErrNotFound
+	}
+	r.Status = status
+	r.PeerState = peerState
+	s.byUUID[uuid] = r
+	return nil
+}

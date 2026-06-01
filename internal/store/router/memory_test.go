@@ -60,6 +60,33 @@ func TestMemory_ToProtoRoundTrips(t *testing.T) {
 	}
 }
 
+func TestMemory_UpdateStatus(t *testing.T) {
+	s := NewMemory()
+	ctx := context.Background()
+	r := Router{UUID: "u1", Name: "r1", Kind: "egress", Backend: "gobgp", Project: "p", Status: "configuring"}
+	if _, err := s.Create(ctx, r); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := s.UpdateStatus(ctx, "u1", "active", "203.0.113.1:Established ; routes=4"); err != nil {
+		t.Fatalf("UpdateStatus: %v", err)
+	}
+	got, err := s.Get(ctx, "u1")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Status != "active" || got.PeerState != "203.0.113.1:Established ; routes=4" {
+		t.Errorf("update not applied : status=%q peer_state=%q", got.Status, got.PeerState)
+	}
+	// Other fields preserved.
+	if got.Name != "r1" || got.Backend != "gobgp" {
+		t.Errorf("desired-state mutated : %+v", got)
+	}
+	// Unknown uuid → ErrNotFound.
+	if err := s.UpdateStatus(ctx, "no-such", "active", ""); err != ErrNotFound {
+		t.Errorf("UpdateStatus(missing) = %v, want ErrNotFound", err)
+	}
+}
+
 func uuids(rs []Router) []string {
 	out := make([]string, len(rs))
 	for i, r := range rs {

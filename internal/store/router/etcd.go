@@ -99,3 +99,25 @@ func (s *etcdStore) Get(ctx context.Context, uuid string) (Router, error) {
 	}
 	return r, nil
 }
+
+// UpdateStatus does a Get→mutate→Put round-trip. Status messages from
+// weft-router are best-effort — a brief lost-race window between the
+// Get and the Put is acceptable since the next message will reconcile.
+// Returning ErrNotFound lets the receiver swallow the "router was
+// deleted while a status was in flight" race upstream.
+func (s *etcdStore) UpdateStatus(ctx context.Context, uuid, status, peerState string) error {
+	r, err := s.Get(ctx, uuid)
+	if err != nil {
+		return err
+	}
+	r.Status = status
+	r.PeerState = peerState
+	b, err := json.Marshal(r)
+	if err != nil {
+		return fmt.Errorf("encode router : %w", err)
+	}
+	if _, err := s.client.Put(ctx, routerKey(uuid), string(b)); err != nil {
+		return fmt.Errorf("etcd put router : %w", err)
+	}
+	return nil
+}

@@ -114,6 +114,15 @@ func (s *Server) Close() error {
 	return err
 }
 
+// RouterStore exposes the router store so external machinery (the
+// statusreceiver subscribing to weft-router heartbeats, future
+// reconcilers, etc.) can read + update Router rows without going
+// through gRPC. Hides nothing the in-process callers can't get to ;
+// keeps the rest of server.Server's surface intact.
+func (s *Server) RouterStore() router.Store {
+	return s.stores.Routers
+}
+
 // ResyncRouters republishes the desired-state for every router in the
 // store. Called once at daemon startup so a fresh weft-network with
 // pre-existing routers (etcd survives the restart, NATS does not) gets

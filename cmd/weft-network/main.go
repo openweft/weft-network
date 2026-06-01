@@ -26,6 +26,7 @@ import (
 	"github.com/openweft/weft-network/internal/metrics"
 	"github.com/openweft/weft-network/internal/publisher"
 	"github.com/openweft/weft-network/internal/server"
+	"github.com/openweft/weft-network/internal/statusreceiver"
 	"github.com/openweft/weft-network/internal/tlsutil"
 	"github.com/openweft/weft-network/internal/tracing"
 	"github.com/spf13/cobra"
@@ -219,6 +220,24 @@ func run(cmd *cobra.Command, o runOpts) error {
 		logger.Warn("router resync failed at startup", "err", err)
 	} else if n > 0 {
 		logger.Info("router resync done", "count", n)
+	}
+
+	// Status receiver : subscribes to weft.router.*.status and feeds
+	// the router store's UpdateStatus. Best-effort like the publisher
+	// — start failures log loudly but don't refuse the daemon. Same
+	// --nats URL as the publisher : one NATS cluster per DC, two
+	// distinct connections (one for publish, one for subscribe) so a
+	// subscriber callback hang can't stall the publisher path.
+	if o.natsURL != "" {
+		recv, err := statusreceiver.New(logger, o.natsURL, netServer.RouterStore())
+		if err != nil {
+			logger.Warn("status receiver construct failed ; skipping", "err", err)
+		} else if err := recv.Start(cmd.Context()); err != nil {
+			logger.Warn("status receiver start failed ; skipping", "url", o.natsURL, "err", err)
+		} else {
+			defer recv.Stop()
+			logger.Info("status receiver wired", "nats_url", o.natsURL)
+		}
 	}
 
 	rec := metrics.New(version, commit, date)
