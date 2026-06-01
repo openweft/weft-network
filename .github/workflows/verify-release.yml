@@ -1,0 +1,115 @@
+name: verify-release
+
+# Manually-triggered reproducible-build verifier. Given a tag, builds
+# the weft-network OCI image twice in fresh sandboxes and asserts the
+# resulting OCI layout (image config + manifest + layer blobs) is
+# bit-for-bit identical (same sha256 over the OCI tarball).
+#
+# Workflow_dispatch-only per feedback_no_autopublish_dev.
+#
+# See the weft repo's docs/operations/reproducible-builds.md for the
+# guarantee, the semantics of SOURCE_DATE_EPOCH, and the list of
+# artifacts that are NOT reproducible by design.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to verify (e.g. v0.1.0).'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - name: checkout the tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
+
+      - name: checkout weft-network-proto (for the replace)
+        uses: actions/checkout@v4
+        with:
+          repository: openweft/weft-network-proto
+          path: ../weft-network-proto
+
+      - name: setup Go (for `go mod vendor`)
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+
+      - name: vendor dependencies
+        run: go mod vendor
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: build twice + diff oci tarball sha256
+        # Each pass runs `docker buildx build --output=type=oci,dest=...`
+        # in a fresh build cache with the same SOURCE_DATE_EPOCH derived
+        # from the tag's commit. A reproducible build produces identical
+        # OCI tarballs ; mismatches surface as a step-summary diff so
+        # the operator can chase the offender.
+        env:
+          ARCH: ${{ matrix.arch }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          SOURCE_DATE_EPOCH="$(git log -1 --format=%ct "${TAG}")"
+          export SOURCE_DATE_EPOCH
+          VERSION="${TAG}"
+          COMMIT="$(git rev-parse --short "${TAG}")"
+          DATE="$(date -u -d "@${SOURCE_DATE_EPOCH}" +%Y-%m-%dT%H:%M:%SZ)"
+
+          build_once() {
+            local out="$1"
+            docker buildx create --use --name "verify-$(basename "$out")" --driver docker-container >/dev/null
+            SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}" \
+            docker buildx build \
+              --platform "linux/${ARCH}" \
+              --build-arg "SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}" \
+              --build-arg "VERSION=${VERSION}" \
+              --build-arg "COMMIT=${COMMIT}" \
+              --build-arg "DATE=${DATE}" \
+              --provenance=false \
+              --sbom=false \
+              --output "type=oci,dest=${out},rewrite-timestamp=true" \
+              .
+            docker buildx rm "verify-$(basename "$out")" >/dev/null
+          }
+
+          mkdir -p out
+          build_once "$PWD/out/r1.tar"
+          build_once "$PWD/out/r2.tar"
+
+          h1="$(sha256sum out/r1.tar | awk '{print $1}')"
+          h2="$(sha256sum out/r2.tar | awk '{print $1}')"
+
+          {
+            echo "## reproducible-build verify (${TAG}, linux/${ARCH})"
+            echo
+            echo "| pass | sha256 (OCI tarball) |"
+            echo "|------|----------------------|"
+            echo "| 1 | \`${h1}\` |"
+            echo "| 2 | \`${h2}\` |"
+          } >>"$GITHUB_STEP_SUMMARY"
+
+          if [ "${h1}" != "${h2}" ]; then
+            echo "::error::OCI tarball sha256 differs between two builds of ${TAG} on linux/${ARCH}"
+            mkdir -p r1 r2
+            tar -C r1 -xf out/r1.tar
+            tar -C r2 -xf out/r2.tar
+            diff <(cd r1 && find blobs -type f -exec sha256sum {} \; | sort) \
+                 <(cd r2 && find blobs -type f -exec sha256sum {} \; | sort) || true
+            exit 1
+          fi
+          echo "::notice::reproducible-build verified for ${TAG} on linux/${ARCH}"

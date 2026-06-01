@@ -78,14 +78,28 @@ jobs:
       - name: Compute version / commit / date
         id: stamps
         run: |
+          set -euo pipefail
           VERSION="$(git describe --tags --always --dirty)"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "commit=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
-          echo "date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+          # SOURCE_DATE_EPOCH = commit timestamp of the build ref
+          # (reproducible-builds.org convention). Used both as the
+          # buildkit env var (rewrites layer mtimes + config `created`)
+          # and as a build-arg the Dockerfile can read to drive
+          # `go build -trimpath -buildvcs=false -ldflags=-buildid=...`
+          # in its build stage. The `date` field below is kept for
+          # backward compatibility with the existing `DATE` build-arg
+          # but is now derived from SOURCE_DATE_EPOCH so two runs of
+          # the same commit produce the same human-readable stamp.
+          EPOCH="$(git log -1 --format=%ct "${GITHUB_SHA}")"
+          echo "epoch=${EPOCH}" >> "$GITHUB_OUTPUT"
+          echo "date=$(date -u -d "@${EPOCH}" +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
 
       - name: Build + push (multi-arch)
         id: build
         uses: docker/build-push-action@v5
+        env:
+          SOURCE_DATE_EPOCH: ${{ steps.stamps.outputs.epoch }}
         with:
           context: .
           # Multi-arch image — arm64 + amd64 cover the cluster topologies
@@ -93,6 +107,8 @@ jobs:
           # emulation is fast enough for CI.
           platforms: linux/amd64,linux/arm64
           push: true
+          provenance: false
+          sbom: false
           tags: |
             ${{ env.IMAGE }}:${{ steps.stamps.outputs.version }}
             ${{ env.IMAGE }}:latest
@@ -100,6 +116,7 @@ jobs:
             VERSION=${{ steps.stamps.outputs.version }}
             COMMIT=${{ steps.stamps.outputs.commit }}
             DATE=${{ steps.stamps.outputs.date }}
+            SOURCE_DATE_EPOCH=${{ steps.stamps.outputs.epoch }}
           # Buildx caches its layers against the previous publish ;
           # speeds up successive tags significantly.
           cache-from: type=gha
