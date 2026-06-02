@@ -109,6 +109,13 @@ func (s *Server) CreateRouter(ctx context.Context, req *netv1.CreateRouterReques
 		s.logger.Warn("router publish failed (state in store but not on NATS)",
 			"uuid", saved.UUID, "err", err)
 	}
+	// Ask the orchestrator to ensure a matching weft-router micro-VM
+	// exists. Failure here is logged but not rolled back either : the
+	// startup ResyncRouters re-attempts on the next weft-network boot.
+	if err := s.lifecycle.Ensure(ctx, saved); err != nil {
+		s.logger.Warn("router lifecycle ensure failed",
+			"uuid", saved.UUID, "err", err)
+	}
 	return &netv1.CreateRouterResponse{Router: saved.ToProto()}, nil
 }
 
@@ -129,6 +136,11 @@ func (s *Server) DeleteRouter(ctx context.Context, req *netv1.DeleteRouterReques
 	// the same uuid doesn't re-apply the deleted state. Best-effort.
 	if err := s.publisher.Withdraw(ctx, uuid); err != nil {
 		s.logger.Warn("router withdraw failed", "uuid", uuid, "err", err)
+	}
+	// Tear down the matching micro-VM. Idempotent per the contract :
+	// the orchestrator swallows "already gone".
+	if err := s.lifecycle.Destroy(ctx, uuid); err != nil {
+		s.logger.Warn("router lifecycle destroy failed", "uuid", uuid, "err", err)
 	}
 	return &netv1.DeleteRouterResponse{}, nil
 }

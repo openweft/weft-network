@@ -13,6 +13,7 @@ import (
 	"time"
 
 	netv1 "github.com/openweft/weft-network-proto"
+	"github.com/openweft/weft-network/internal/lifecycle"
 	"github.com/openweft/weft-network/internal/publisher"
 	"github.com/openweft/weft-network/internal/store"
 	"github.com/openweft/weft-network/internal/store/dns"
@@ -33,6 +34,12 @@ type Options struct {
 	// wired. Production weft-network constructs a publisher.NATS in
 	// main and passes it here.
 	RouterPublisher publisher.RouterPublisher
+	// RouterLifecycle orchestrates the weft-router micro-VM behind a
+	// Router resource. nil = Noop (just logs the intent), the default
+	// while the orchestration story is still gelling — operators
+	// hand-spawn the micro-VM today. When the real WeftClient impl
+	// lands main passes it here.
+	RouterLifecycle lifecycle.RouterLifecycle
 }
 
 // Server implements netv1.NetworkControlPlaneServer.
@@ -48,6 +55,7 @@ type Server struct {
 	opts      Options
 	stores    *store.Stores
 	publisher publisher.RouterPublisher
+	lifecycle lifecycle.RouterLifecycle
 	// etcdClient is the live connection when EtcdURL is set ; Close
 	// must be called via Server.Close on shutdown so the watch
 	// goroutines and connections drain cleanly.
@@ -99,7 +107,18 @@ func New(opts Options) *Server {
 	if pub == nil {
 		pub = publisher.Noop{Log: opts.Logger}
 	}
-	return &Server{logger: opts.Logger, opts: opts, stores: stores, publisher: pub, etcdClient: etcdClient}
+	lc := opts.RouterLifecycle
+	if lc == nil {
+		lc = lifecycle.Noop{Log: opts.Logger}
+	}
+	return &Server{
+		logger:     opts.Logger,
+		opts:       opts,
+		stores:     stores,
+		publisher:  pub,
+		lifecycle:  lc,
+		etcdClient: etcdClient,
+	}
 }
 
 // Close releases the etcd connection when one was opened. Idempotent.
@@ -124,14 +143,14 @@ func (s *Server) RouterStore() router.Store {
 }
 
 // ResyncRouters republishes the desired-state for every router in the
-// store. Called once at daemon startup so a fresh weft-network with
-// pre-existing routers (etcd survives the restart, NATS does not) gets
-// the matching weft-router micro-VMs back in sync without needing an
-// operator edit.
+// store and re-Ensures the matching micro-VM. Called once at daemon
+// startup so a fresh weft-network with pre-existing routers (etcd
+// survives the restart, NATS does not) gets the matching weft-router
+// micro-VMs back in sync without needing an operator edit.
 //
-// Best-effort : individual publish failures are logged and skipped, the
-// sweep continues so a single bad router doesn't block startup. Returns
-// the count of routers attempted ; the caller logs that.
+// Best-effort : individual publish / lifecycle failures are logged and
+// skipped, the sweep continues so a single bad router doesn't block
+// startup. Returns the count of routers attempted.
 func (s *Server) ResyncRouters(ctx context.Context) (int, error) {
 	rs, err := s.stores.Routers.List(ctx, router.ListFilter{})
 	if err != nil {
@@ -140,6 +159,10 @@ func (s *Server) ResyncRouters(ctx context.Context) (int, error) {
 	for _, r := range rs {
 		if err := s.publisher.Publish(ctx, r); err != nil {
 			s.logger.Warn("router resync publish failed",
+				"uuid", r.UUID, "kind", r.Kind, "backend", r.Backend, "err", err)
+		}
+		if err := s.lifecycle.Ensure(ctx, r); err != nil {
+			s.logger.Warn("router resync ensure failed",
 				"uuid", r.UUID, "kind", r.Kind, "backend", r.Backend, "err", err)
 		}
 	}
