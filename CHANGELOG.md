@@ -5,6 +5,46 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+v0.2.0-track work since `v0.1.0` (`cc3b880`).
+
+### Added
+
+- **Publisher → router NATS pipeline** : DesiredState push to
+  `weft-router` on every Router CRUD (`11631eb`), with OTel spans
+  around `Publish` / `Withdraw` (`fdd8cc7`).
+- **Server startup resync** + integration tests for the publisher
+  wiring (`ca0c811`).
+- **Status receiver** : closes the observability loop from
+  `weft-router` back into `weft-network` (`74bc068`), with
+  `Prefixes` threaded from the proto through the store and the
+  publisher (`9baf487`).
+- **Lifecycle seam** for orchestrating the weft-router micro-VM
+  (`4d86cc3`), with the real `WeftClient` impl calling
+  `weft.RegisterMicroVM` with the configured `image=` (`a28881b`).
+- **Reproducible build + supply chain** : `SOURCE_DATE_EPOCH`-pinned
+  bit-reproducible OCI image (`b28e689`).
+
+### Changed
+
+- **Stores coverage** lifted from ~40 % → 65–87 % across the four
+  domains (scheduling rules, DNS zones, DNS records, routers, load
+  balancers). Replicated the v0.1.0 etcd / memory parity tests under
+  a shared `etcdtest` helper so a backend bug fails both targets.
+- **`etcdtest` helper** : reusable harness that spins an
+  `embed.Etcd` in `t.TempDir()` and tears it down on `t.Cleanup`.
+  Adopted by every `*_etcd_test.go` in the repo ; consumers outside
+  this module can vendor it for their own etcd-backed packages.
+
+### Fixed
+
+- **DNS zone updates** (real bug) : zone `Put` against etcd is now
+  retried with a CAS loop so two concurrent updates can't clobber
+  each other (`8acb9e3`).
+- **`weftclient.Ensure`** (real bug) : must `StartVM` after
+  `RegisterMicroVM`, otherwise the router VM never boots (`98dcc29`).
+
 ## [0.1.0] - 2026-05-31
 
 ### Added
