@@ -17,10 +17,10 @@ import (
 // agentClient is the minimal slice of weftv1.WeftAgentClient WeftClient
 // needs. Defined locally so tests can satisfy it with a fake without
 // pulling all 30+ RPCs from the full client interface. The real impl
-// is *weftv1.weftAgentClient (the generated stub) — it implements
-// the same three methods natively.
+// is the generated stub — it implements these four methods natively.
 type agentClient interface {
 	RegisterMicroVM(ctx context.Context, in *weftv1.RegisterMicroVMRequest, opts ...grpc.CallOption) (*weftv1.RegisterMicroVMResponse, error)
+	StartVM(ctx context.Context, in *weftv1.StartVMRequest, opts ...grpc.CallOption) (*weftv1.StartVMResponse, error)
 	StopVM(ctx context.Context, in *weftv1.StopVMRequest, opts ...grpc.CallOption) (*weftv1.StopVMResponse, error)
 	DeleteVM(ctx context.Context, in *weftv1.DeleteVMRequest, opts ...grpc.CallOption) (*weftv1.DeleteVMResponse, error)
 }
@@ -96,27 +96,47 @@ func (w *WeftClient) Close() {
 // Ensure spawns the matching weft-router micro-VM for r. Short-circuits
 // for kind=peer or backend != gobgp (no micro-VM associated). The VM
 // name is derived from the Router uuid so the same logical Router
-// always maps to the same VM (Ensure-idempotency relies on weft's
-// own "already exists" handling — currently surfaced as
-// AlreadyExists / Internal ; we treat AlreadyExists as success).
+// always maps to the same VM.
+//
+// Two-step : RegisterMicroVM materialises the inventory entry +
+// pulls the image (the heavy lifting), StartVM actually boots the
+// micro-VM. Skipping StartVM is the bug-shape "VM exists but never
+// runs" — without it weft-router never boots, the NATS subscriber
+// never connects, the DesiredState publisher emits into a void.
+//
+// Idempotence per RPC :
+//   - RegisterMicroVM : AlreadyExists → success (re-Ensure on the
+//     same router is a no-op past the inventory write).
+//   - StartVM : we always issue it. weft's StartVM is itself
+//     idempotent on an already-running VM (returns success), and we
+//     treat AlreadyExists / FailedPrecondition as success too in case
+//     a driver surfaces a different code.
 func (w *WeftClient) Ensure(ctx context.Context, r router.Router) error {
 	if r.Kind != "egress" || r.Backend != "gobgp" {
 		return nil
 	}
 	name := vmNameFor(r.UUID)
-	_, err := w.client.RegisterMicroVM(ctx, &weftv1.RegisterMicroVMRequest{
+
+	if _, err := w.client.RegisterMicroVM(ctx, &weftv1.RegisterMicroVMRequest{
 		Name:    name,
 		Project: w.project,
 		Image:   w.image,
-	})
-	if err != nil {
-		if status.Code(err) == codes.AlreadyExists {
-			// Idempotent — the VM already exists, that's fine.
-			return nil
-		}
+	}); err != nil && status.Code(err) != codes.AlreadyExists {
 		return fmt.Errorf("RegisterMicroVM %s: %w", name, err)
 	}
-	w.log.Info("router micro-VM registered", "router", r.UUID, "vm", name, "image", w.image)
+
+	if _, err := w.client.StartVM(ctx, &weftv1.StartVMRequest{
+		Name:    name,
+		Project: w.project,
+	}); err != nil {
+		switch status.Code(err) {
+		case codes.AlreadyExists, codes.FailedPrecondition:
+			// VM already running — fine.
+		default:
+			return fmt.Errorf("StartVM %s: %w", name, err)
+		}
+	}
+	w.log.Info("router micro-VM ensured", "router", r.UUID, "vm", name, "image", w.image)
 	return nil
 }
 

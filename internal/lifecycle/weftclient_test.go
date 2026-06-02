@@ -17,13 +17,15 @@ import (
 )
 
 type fakeAgent struct {
-	mu              sync.Mutex
-	registerCalls   []*weftv1.RegisterMicroVMRequest
-	stopCalls       []*weftv1.StopVMRequest
-	deleteCalls     []*weftv1.DeleteVMRequest
-	registerErr     error
-	stopErr         error
-	deleteErr       error
+	mu            sync.Mutex
+	registerCalls []*weftv1.RegisterMicroVMRequest
+	startCalls    []*weftv1.StartVMRequest
+	stopCalls     []*weftv1.StopVMRequest
+	deleteCalls   []*weftv1.DeleteVMRequest
+	registerErr   error
+	startErr      error
+	stopErr       error
+	deleteErr     error
 }
 
 func (f *fakeAgent) RegisterMicroVM(_ context.Context, in *weftv1.RegisterMicroVMRequest, _ ...grpc.CallOption) (*weftv1.RegisterMicroVMResponse, error) {
@@ -34,6 +36,16 @@ func (f *fakeAgent) RegisterMicroVM(_ context.Context, in *weftv1.RegisterMicroV
 		return nil, f.registerErr
 	}
 	return &weftv1.RegisterMicroVMResponse{}, nil
+}
+
+func (f *fakeAgent) StartVM(_ context.Context, in *weftv1.StartVMRequest, _ ...grpc.CallOption) (*weftv1.StartVMResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.startCalls = append(f.startCalls, in)
+	if f.startErr != nil {
+		return nil, f.startErr
+	}
+	return &weftv1.StartVMResponse{}, nil
 }
 
 func (f *fakeAgent) StopVM(_ context.Context, in *weftv1.StopVMRequest, _ ...grpc.CallOption) (*weftv1.StopVMResponse, error) {
@@ -61,7 +73,7 @@ func newWeftClientForTest(image, project string, c agentClient) *WeftClient {
 	return newWeftClientWithStub(slog.New(slog.NewTextHandler(io.Discard, nil)), image, project, c)
 }
 
-func TestEnsure_GobgpEgress_Registers(t *testing.T) {
+func TestEnsure_GobgpEgress_RegistersAndStarts(t *testing.T) {
 	fa := &fakeAgent{}
 	w := newWeftClientForTest("ghcr.io/openweft/weft-router:v0.1.0", "platform", fa)
 	r := router.Router{UUID: "rt-1", Kind: "egress", Backend: "gobgp", External: "65000:198.51.100.1"}
@@ -82,6 +94,40 @@ func TestEnsure_GobgpEgress_Registers(t *testing.T) {
 	}
 	if got.Project != "platform" {
 		t.Errorf("Project = %q", got.Project)
+	}
+	// Without StartVM the VM is registered but never boots ; weft-router
+	// stays cold, the subscriber never connects. Lock that in.
+	if len(fa.startCalls) != 1 {
+		t.Fatalf("Start count = %d, want 1", len(fa.startCalls))
+	}
+	if fa.startCalls[0].Name != "weft-router-rt-1" || fa.startCalls[0].Project != "platform" {
+		t.Errorf("Start req shape wrong: %+v", fa.startCalls[0])
+	}
+}
+
+func TestEnsure_StartIdempotenceOnAlreadyRunning(t *testing.T) {
+	// weft surfaces "VM already running" via FailedPrecondition on some
+	// drivers and AlreadyExists on others. Both should be no-ops so a
+	// re-Ensure (eg. ResyncRouters at startup) doesn't error on a still-
+	// running router.
+	for _, code := range []codes.Code{codes.AlreadyExists, codes.FailedPrecondition} {
+		t.Run(code.String(), func(t *testing.T) {
+			fa := &fakeAgent{startErr: status.Error(code, "already running")}
+			w := newWeftClientForTest("img", "p", fa)
+			r := router.Router{UUID: "r1", Kind: "egress", Backend: "gobgp"}
+			if err := w.Ensure(context.Background(), r); err != nil {
+				t.Errorf("Ensure should swallow %s, got %v", code, err)
+			}
+		})
+	}
+}
+
+func TestEnsure_StartOtherErrorPropagates(t *testing.T) {
+	fa := &fakeAgent{startErr: status.Error(codes.Internal, "boom")}
+	w := newWeftClientForTest("img", "p", fa)
+	r := router.Router{UUID: "r1", Kind: "egress", Backend: "gobgp"}
+	if err := w.Ensure(context.Background(), r); err == nil {
+		t.Error("expected Start error to propagate")
 	}
 }
 
