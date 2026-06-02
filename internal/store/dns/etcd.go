@@ -215,10 +215,35 @@ func (s *etcdStore) DeleteRecord(ctx context.Context, uuid string) error {
 	if resp.Deleted == 0 {
 		return ErrNotFound
 	}
-	if z, gErr := s.GetZone(ctx, got.ZoneUUID); gErr == nil && z.Records > 0 {
+	// CAS-retry the zone decrement so we don't clobber concurrent updates
+	// to other Zone fields (PushTarget, PushState, TTLDefault, ...).
+	for i := 0; i < 8; i++ {
+		zKey := etcdZoneKey(got.ZoneUUID)
+		gr, gErr := s.client.Get(ctx, zKey)
+		if gErr != nil || len(gr.Kvs) == 0 {
+			break
+		}
+		var z Zone
+		if json.Unmarshal(gr.Kvs[0].Value, &z) != nil {
+			break
+		}
+		if z.Records == 0 {
+			break
+		}
 		z.Records--
-		if zEnc, mErr := json.Marshal(z); mErr == nil {
-			_, _ = s.client.Put(ctx, etcdZoneKey(z.UUID), string(zEnc))
+		zEnc, mErr := json.Marshal(z)
+		if mErr != nil {
+			break
+		}
+		tr, txErr := s.client.Txn(ctx).
+			If(clientv3.Compare(clientv3.ModRevision(zKey), "=", gr.Kvs[0].ModRevision)).
+			Then(clientv3.OpPut(zKey, string(zEnc))).
+			Commit()
+		if txErr != nil {
+			break
+		}
+		if tr.Succeeded {
+			break
 		}
 	}
 	return nil
