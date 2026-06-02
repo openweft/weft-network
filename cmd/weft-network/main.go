@@ -23,6 +23,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/openweft/weft-network/internal/lifecycle"
 	"github.com/openweft/weft-network/internal/metrics"
 	"github.com/openweft/weft-network/internal/publisher"
 	"github.com/openweft/weft-network/internal/server"
@@ -56,6 +57,9 @@ func newRootCmd() *cobra.Command {
 		metricsAddr  string
 		etcdURL      string
 		natsURL      string
+		weftSocket   string
+		routerImage  string
+		routerProj   string
 		logLevel     string
 		tlsCertFile  string
 		tlsKeyFile   string
@@ -81,6 +85,9 @@ etcd-connected gauge) on a separate listener.`,
 				metricsAddr:  metricsAddr,
 				etcdURL:      etcdURL,
 				natsURL:      natsURL,
+				weftSocket:   weftSocket,
+				routerImage:  routerImage,
+				routerProj:   routerProj,
 				logLevel:     logLevel,
 				tlsCertFile:  tlsCertFile,
 				tlsKeyFile:   tlsKeyFile,
@@ -100,6 +107,14 @@ etcd-connected gauge) on a separate listener.`,
 	f.StringVar(&natsURL, "nats", "",
 		"NATS URL for the weft-router publisher (e.g. nats://nats.weft.internal:4222). "+
 			"Empty = Noop publisher (router CRUD persists but no DesiredState reaches micro-VMs).")
+	f.StringVar(&weftSocket, "weft-socket", "",
+		"Path to the weft daemon Unix socket. When set, weft-network drives "+
+			"RegisterMicroVM / StopVM / DeleteVM for the matching weft-router micro-VMs "+
+			"via lifecycle.WeftClient. Empty = Noop lifecycle (operators hand-spawn).")
+	f.StringVar(&routerImage, "router-image", "ghcr.io/openweft/weft-router:latest",
+		"OCI image ref used when WeftClient spawns a weft-router micro-VM.")
+	f.StringVar(&routerProj, "router-project", "platform",
+		"weft project to spawn router micro-VMs into.")
 	f.StringVar(&logLevel, "log-level", "info", "log level : debug / info / warn / error")
 	f.StringVar(&tlsCertFile, "tls-cert", "",
 		"PEM-encoded server certificate. Pair with --tls-key to enable TLS ; unset = insecure (unix-socket only).")
@@ -123,6 +138,9 @@ type runOpts struct {
 	metricsAddr  string
 	etcdURL      string
 	natsURL      string
+	weftSocket   string
+	routerImage  string
+	routerProj   string
 	logLevel     string
 	tlsCertFile  string
 	tlsKeyFile   string
@@ -201,10 +219,35 @@ func run(cmd *cobra.Command, o runOpts) error {
 		}
 	}
 
+	// Router lifecycle : WeftClient when --weft-socket is set, Noop
+	// otherwise. Same shape as the publisher's fallback — failures to
+	// dial the weft socket log loudly and downgrade to Noop so the
+	// daemon still serves Router CRUD ; operators see "router
+	// lifecycle ensure failed" warnings on Create until they fix the
+	// socket path.
+	var routerLC lifecycle.RouterLifecycle
+	var weftLC *lifecycle.WeftClient
+	if o.weftSocket != "" {
+		wc, err := lifecycle.NewWeftClient(logger, o.weftSocket, o.routerImage, o.routerProj)
+		if err != nil {
+			logger.Error("weft lifecycle dial failed ; falling back to Noop",
+				"socket", o.weftSocket, "err", err)
+		} else {
+			routerLC = wc
+			weftLC = wc
+			logger.Info("router lifecycle wired",
+				"weft_socket", o.weftSocket, "image", o.routerImage, "project", o.routerProj)
+		}
+	}
+	if weftLC != nil {
+		defer weftLC.Close()
+	}
+
 	netServer := server.New(server.Options{
 		Logger:          logger,
 		EtcdURL:         o.etcdURL,
 		RouterPublisher: routerPub,
+		RouterLifecycle: routerLC,
 	})
 	defer func() {
 		if err := netServer.Close(); err != nil {
@@ -291,6 +334,10 @@ func run(cmd *cobra.Command, o runOpts) error {
 	if tlsReloader != nil {
 		hup := make(chan os.Signal, 1)
 		signal.Notify(hup, syscall.SIGHUP)
+		defer func() {
+			signal.Stop(hup)
+			close(hup)
+		}()
 		go func() {
 			for range hup {
 				if err := tlsReloader.Reload(); err != nil {
