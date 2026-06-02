@@ -120,9 +120,12 @@ func StateFor(r router.Router) DesiredState {
 	if !ok {
 		return DesiredState{}
 	}
+	prefixes := make([]PrefixAdvertisement, 0, len(r.Prefixes))
+	for _, cidr := range r.Prefixes {
+		prefixes = append(prefixes, PrefixAdvertisement{Prefix: cidr})
+	}
 	return DesiredState{
-		Peers: []PeerConfig{peer},
-		// Prefixes left empty until the proto grows a "prefixes" field
-		// per router. Operators publish them out-of-band today.
+		Peers:    []PeerConfig{peer},
+		Prefixes: prefixes,
 	}
 }

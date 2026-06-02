@@ -27,6 +27,7 @@ type Router struct {
 	Backend     string   // "wireguard" | "gobgp" | "vyos" | "frr"
 	Networks    []string // tenant networks this router stitches
 	External    string   // AS number / peer IP — only for kind=egress
+	Prefixes    []string // CIDRs the router advertises (kind=egress + backend=gobgp)
 	PeerState   string
 	Project     string
 	Status      string
@@ -42,6 +43,7 @@ func (r Router) ToProto() *netv1.RouterInfo {
 		Backend:         r.Backend,
 		Networks:        append([]string(nil), r.Networks...),
 		External:        r.External,
+		Prefixes:        append([]string(nil), r.Prefixes...),
 		PeerState:       r.PeerState,
 		Project:         r.Project,
 		Status:          r.Status,

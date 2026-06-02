@@ -85,6 +85,7 @@ func (s *Server) CreateRouter(ctx context.Context, req *netv1.CreateRouterReques
 		Backend:     backend,
 		Networks:    append([]string(nil), req.GetNetworks()...),
 		External:    strings.TrimSpace(req.GetExternal()),
+		Prefixes:    append([]string(nil), req.GetPrefixes()...),
 		Project:     req.GetProject(),
 		Status:      "configuring", // until the reconciler reports active
 		CreatedAtNs: time.Now().UnixNano(),

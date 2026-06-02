@@ -57,14 +57,21 @@ func TestStateFor(t *testing.T) {
 	if s := StateFor(router.Router{Kind: "egress", Backend: "vyos", External: "198.51.100.1"}); len(s.Peers) != 0 {
 		t.Errorf("vyos egress shouldn't emit state: %+v", s)
 	}
-	// kind=egress + backend=gobgp → one peer parsed from External.
-	r := router.Router{Kind: "egress", Backend: "gobgp", External: "65512:198.51.100.1"}
+	// kind=egress + backend=gobgp → one peer parsed from External
+	// plus prefixes carried over.
+	r := router.Router{
+		Kind: "egress", Backend: "gobgp", External: "65512:198.51.100.1",
+		Prefixes: []string{"203.0.113.0/24", "2001:db8::/32"},
+	}
 	s := StateFor(r)
 	if len(s.Peers) != 1 {
 		t.Fatalf("gobgp egress should emit one peer, got %d", len(s.Peers))
 	}
 	if s.Peers[0].Address != "198.51.100.1" || s.Peers[0].RemoteASN != 65512 {
 		t.Errorf("peer parsed wrong: %+v", s.Peers[0])
+	}
+	if len(s.Prefixes) != 2 || s.Prefixes[0].Prefix != "203.0.113.0/24" || s.Prefixes[1].Prefix != "2001:db8::/32" {
+		t.Errorf("prefixes round-trip wrong: %+v", s.Prefixes)
 	}
 }
 
