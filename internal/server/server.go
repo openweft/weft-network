@@ -66,11 +66,13 @@ type Server struct {
 // Stores default to in-memory backends when nil + EtcdURL is empty,
 // or to etcd-backed stores when EtcdURL is set.
 //
-// Today only the SchedulingRules domain has an etcd backend ; DNS,
-// routers, and load balancers stay in-memory regardless of EtcdURL.
-// As each domain gets its etcd impl (same pattern as scheduling/etcd.go),
-// flip its line below ; the dashboard's live-first contract
-// guarantees graceful behaviour during the partial-migration window.
+// All four domains (scheduling-rules, dns, routers, load-balancers)
+// have both backends implemented. The dispatch below picks etcd-backed
+// stores when EtcdURL is set and falls back gracefully to memory with
+// a loud warning on connection failure. Each store package's etcd.go
+// follows the same template : one key per row, JSON-encoded value,
+// uniqueness via prefix scan, cascading deletes where the memory store
+// cascades.
 func New(opts Options) *Server {
 	if opts.Logger == nil {
 		opts.Logger = slog.Default()
