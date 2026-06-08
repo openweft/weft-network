@@ -30,6 +30,7 @@ import (
 	"github.com/openweft/weft-network/internal/statusreceiver"
 	"github.com/openweft/weft-network/internal/tlsutil"
 	"github.com/openweft/weft-network/internal/tracing"
+	weftslognats "github.com/openweft/weft-slognats"
 	"github.com/spf13/cobra"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
@@ -150,6 +151,22 @@ type runOpts struct {
 }
 
 func run(cmd *cobra.Command, o runOpts) error {
+	// Fan slog records out to NATS (in addition to stderr) on a
+	// per-host subject so weft-network logs aggregate alongside the
+	// rest of the platform. Subject uses $WEFT_HOST_UUID when set,
+	// falling back to hostname so it's always well-formed.
+	hostID := os.Getenv("WEFT_HOST_UUID")
+	if hostID == "" {
+		if h, err := os.Hostname(); err == nil {
+			hostID = h
+		} else {
+			hostID = "unknown"
+		}
+	}
+	natsLogger, logCloser := weftslognats.SetupFromEnv("weft.network." + hostID + ".log")
+	defer logCloser.Close()
+	slog.SetDefault(natsLogger)
+
 	logger := newLogger(o.logLevel)
 	tlsOpts := tlsutil.Options{
 		CertFile:     o.tlsCertFile,

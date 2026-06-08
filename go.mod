@@ -87,7 +87,8 @@ require (
 
 require (
 	github.com/openweft/weft-client v0.0.0
-	github.com/openweft/weft-proto v0.4.0
+	github.com/openweft/weft-proto v0.9.0
+	github.com/openweft/weft-slognats v0.2.0
 )
 
 // Local replaces for the weft control-plane API surface that
