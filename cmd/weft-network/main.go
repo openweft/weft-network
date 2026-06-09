@@ -166,6 +166,7 @@ func run(cmd *cobra.Command, o runOpts) error {
 	natsLogger, logCloser := weftslognats.SetupFromEnv("weft.network." + hostID + ".log")
 	defer logCloser.Close()
 	slog.SetDefault(natsLogger)
+	defer weftslognats.PanicReporter("weft-network")
 
 	logger := newLogger(o.logLevel)
 	tlsOpts := tlsutil.Options{
