@@ -5,6 +5,26 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.3] - 2026-06-14
+
+### Added
+
+- **Prometheus metrics on `internal/fips/`** matching the established
+  weft pattern (sister packages `firewallpub` + `floatingipnat`) :
+  - `weft_network_fips_index_entries{network}` gauge — active-Mapped
+    count per network, updated on every Upsert / Delete / ReplaceAll.
+  - `weft_network_fips_subscriber_events_total{kind}` counter —
+    labelled `allocated`, `released`, `mapped`, `unmapped`, `unknown`
+    for the wildcard's silent-drop branch.
+  - `weft_network_fips_poller_ticks_total{why, result}` counter —
+    `why=seed|refresh`, `result=ok|err`.
+  - `weft_network_fips_poller_changes{kind}` counter — `kind=added|removed|churned`,
+    incremented per affected network at every ReplaceAll.
+  Lazy-bind to `DefaultRegisterer` via `sync.Once`-gated
+  `ensureRegistered()` ; `Register(reg prometheus.Registerer)`
+  available for tests + a custom scrape namespace. 5 new tests.
+  Commit `dd55860`.
+
 ## [0.3.2] - 2026-06-14
 
 ### Added
