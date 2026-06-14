@@ -5,6 +5,31 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.4] - 2026-06-14
+
+### Added
+
+- **Leader election via etcd lease — active-standby HA**. New
+  `internal/leader/` package wraps
+  `go.etcd.io/etcd/client/v3/concurrency.Election` behind a small
+  `Run(ctx, onAcquire, onLost)` surface. When weft-network is
+  configured with `--etcd`, the daemon now elects ONE leader per
+  cluster via the key `/weft-network/leader` (10 s TTL by default).
+  Only the leader runs the reactive long-loops :
+  `fips.Subscriber` + `fips.Poller`. Followers serve gRPC CRUD
+  normally (etcd is the source of truth) but stay idle on the
+  reactive side, ready to take over within one TTL window after
+  a hard leader crash.
+  - Eliminates the weft-network SPOF flagged in the HA audit :
+    a fresh follower's poller seeds from weft on acquire, so
+    the BGP /32 announce set is restored before the publisher
+    fires its first DesiredState message.
+  - Single-host dev (`--etcd` empty) skips the gate and runs
+    inline as before. No-op upgrade for that path.
+  - 4 new tests against embedded etcd : acquire-fires-onAcquire,
+    two-candidates-only-one-leads + failover-after-cancel,
+    onLost-fires-on-cancel, options-validation. Commit follows.
+
 ## [0.3.3] - 2026-06-14
 
 ### Added

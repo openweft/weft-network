@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/openweft/weft-network/internal/fips"
+	"github.com/openweft/weft-network/internal/leader"
 	"github.com/openweft/weft-network/internal/lifecycle"
 	"github.com/openweft/weft-network/internal/metrics"
 	"github.com/openweft/weft-network/internal/publisher"
@@ -34,6 +35,7 @@ import (
 	weftslognats "github.com/openweft/weft-slognats"
 	"github.com/nats-io/nats.go"
 	"github.com/spf13/cobra"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 
@@ -82,6 +84,43 @@ func routerStitchesNetwork(r routerstore.Router, networkUUID string) bool {
 		}
 	}
 	return false
+}
+
+// runLeaderElection dials etcd and runs leader.Election in a
+// loop, invoking startReactive(leaderCtx) on every Campaign win.
+// leaderCtx cancels when the lease is lost OR the daemon shuts
+// down, so the reactive goroutines exit cleanly. Logs + retries
+// on transient etcd errors ; gives up only when ctx is cancelled.
+func runLeaderElection(ctx context.Context, logger *slog.Logger, etcdURL string, startReactive func(context.Context)) {
+	cli, err := clientv3.New(clientv3.Config{
+		Endpoints:   strings.Split(etcdURL, ","),
+		DialTimeout: 5 * time.Second,
+	})
+	if err != nil {
+		logger.Error("leader election : etcd dial failed ; reactive loops will NOT run",
+			"url", etcdURL, "err", err)
+		return
+	}
+	defer cli.Close()
+	hostID, _ := os.Hostname()
+	if hostID == "" {
+		hostID = "weft-network"
+	}
+	el, err := leader.New(cli, leader.Options{
+		Key:      "/weft-network/leader",
+		Identity: hostID,
+		TTL:      10,
+	}, logger)
+	if err != nil {
+		logger.Error("leader election : construct failed", "err", err)
+		return
+	}
+	_ = el.Run(ctx, func(leaderCtx context.Context) {
+		logger.Info("weft-network became leader ; starting reactive loops")
+		startReactive(leaderCtx)
+	}, func() {
+		logger.Warn("weft-network lost leadership ; reactive loops stopping")
+	})
 }
 
 // weftFIPSource adapts a *lifecycle.WeftClient into the
@@ -372,63 +411,75 @@ func run(cmd *cobra.Command, o runOpts) error {
 		}
 	}
 
-	// Floating-IP subscriber : listens for "floating_ip.*"
-	// PlatformEvents on the weft event bus, maintains an in-memory
-	// per-network active-FIP index, and re-publishes every router
-	// stitching the affected network on each mutation. Together with
-	// publisher.SetFIPLookup this is what makes weft-router announce
-	// floating IPs as /32 (or /128) BGP prefixes to the upstream peer.
+	// Floating-IP reactive loops (subscriber + poller). Gated by
+	// the leader election when an etcd cluster is configured —
+	// only ONE weft-network instance per cluster runs these to
+	// avoid duplicate publishes / NATS bandwidth waste / churn on
+	// the per-network active-FIP index. With no etcd (single-host
+	// dev), every instance runs them (typically just one) and the
+	// gate is a no-op.
 	//
-	// Skipped when --nats is empty (the platform event bus is also
-	// NATS-backed in production — without it weft can't reach
-	// weft-network and FIPs stay host-NAT only, which is a valid
-	// single-host dev mode).
-	if o.natsURL != "" {
-		if natsPub, ok := routerPub.(*publisher.NATS); ok {
-			fipNC, err := nats.Connect(o.natsURL,
-				nats.Name("weft-network/fip-subscriber"),
-				nats.MaxReconnects(-1))
-			if err != nil {
-				logger.Warn("fip subscriber connect failed ; FIPs will not appear in BGP",
-					"url", o.natsURL, "err", err)
-			} else {
-				idx := fips.New()
-				natsPub.SetFIPLookup(idx)
-				onChange := republishRoutersOnNetworkChange(cmd.Context(), logger, netServer.RouterStore(), natsPub)
-				// Seed-via-poller : if a WeftClient is wired,
-				// hydrate the index from weft.ListFloatingIPs
-				// BEFORE the subscriber goes live so the
-				// publisher's first call after restart doesn't
-				// withdraw every active /32 from upstream BGP.
-				// The poller keeps ticking as a safety net
-				// against missed NATS events.
-				if weftLC != nil {
-					poller := fips.NewPoller(idx, weftFIPSource(weftLC), 30*time.Second, logger, onChange)
-					if err := poller.Seed(cmd.Context()); err != nil {
-						logger.Warn("fip seed from weft failed ; index starts empty, the next event refills it",
-							"err", err)
-					} else {
-						logger.Info("fip index seeded from weft", "entries", len(idx.All()))
-					}
-					go func() {
-						_ = poller.Run(cmd.Context())
-					}()
-				}
-				sub, err := fips.NewSubscriber(fipNC, idx, logger, onChange)
-				if err != nil {
-					logger.Warn("fip subscriber construct failed ; skipping", "err", err)
-					fipNC.Close()
-				} else {
-					go func() {
-						if err := sub.Run(cmd.Context()); err != nil && err != context.Canceled {
-							logger.Warn("fip subscriber exited", "err", err)
-						}
-					}()
-					defer fipNC.Close()
-					logger.Info("fip subscriber wired", "subject", fips.Subject)
-				}
-			}
+	// Skipped entirely when --nats is empty : the platform event
+	// bus is also NATS-backed in production — without it weft
+	// can't reach weft-network and FIPs stay host-NAT only, which
+	// is a valid single-host dev mode.
+	startFIPLoops := func(leaderCtx context.Context) {
+		if o.natsURL == "" {
+			return
 		}
+		natsPub, ok := routerPub.(*publisher.NATS)
+		if !ok {
+			return
+		}
+		fipNC, err := nats.Connect(o.natsURL,
+			nats.Name("weft-network/fip-subscriber"),
+			nats.MaxReconnects(-1))
+		if err != nil {
+			logger.Warn("fip subscriber connect failed ; FIPs will not appear in BGP",
+				"url", o.natsURL, "err", err)
+			return
+		}
+		idx := fips.New()
+		natsPub.SetFIPLookup(idx)
+		onChange := republishRoutersOnNetworkChange(leaderCtx, logger, netServer.RouterStore(), natsPub)
+		// Seed-via-poller : if a WeftClient is wired, hydrate the
+		// index from weft.ListFloatingIPs BEFORE the subscriber
+		// goes live so the publisher's first call after restart
+		// doesn't withdraw every active /32 from upstream BGP.
+		if weftLC != nil {
+			poller := fips.NewPoller(idx, weftFIPSource(weftLC), 30*time.Second, logger, onChange)
+			if err := poller.Seed(leaderCtx); err != nil {
+				logger.Warn("fip seed from weft failed ; index starts empty, the next event refills it",
+					"err", err)
+			} else {
+				logger.Info("fip index seeded from weft", "entries", len(idx.All()))
+			}
+			go func() { _ = poller.Run(leaderCtx) }()
+		}
+		sub, err := fips.NewSubscriber(fipNC, idx, logger, onChange)
+		if err != nil {
+			logger.Warn("fip subscriber construct failed ; skipping", "err", err)
+			fipNC.Close()
+			return
+		}
+		go func() {
+			if err := sub.Run(leaderCtx); err != nil && err != context.Canceled {
+				logger.Warn("fip subscriber exited", "err", err)
+			}
+			// Close the FIP NATS conn when the loop exits — happens
+			// on shutdown or on leader loss (so a future re-acquire
+			// can dial a fresh conn).
+			fipNC.Close()
+		}()
+		logger.Info("fip subscriber wired", "subject", fips.Subject)
+	}
+
+	// Leader-gate the reactive loops on etcd. Without etcd, run
+	// them inline on cmd.Context() — pre-leader behaviour.
+	if o.etcdURL != "" {
+		go runLeaderElection(cmd.Context(), logger, o.etcdURL, startFIPLoops)
+	} else {
+		startFIPLoops(cmd.Context())
 	}
 
 	rec := metrics.New(version, commit, date)

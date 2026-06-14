@@ -48,7 +48,6 @@ require (
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/nats-io/nkeys v0.4.15 // indirect
 	github.com/nats-io/nuid v1.0.1 // indirect
-	github.com/prometheus/client_model v0.6.2 // indirect
 	github.com/prometheus/common v0.66.1 // indirect
 	github.com/prometheus/procfs v0.16.1 // indirect
 	github.com/sirupsen/logrus v1.9.3 // indirect
@@ -89,6 +88,7 @@ require (
 	github.com/openweft/weft-client v0.0.0
 	github.com/openweft/weft-proto v0.9.0
 	github.com/openweft/weft-slognats v0.3.0
+	github.com/prometheus/client_model v0.6.2
 )
 
 // Local replaces for the weft control-plane API surface that
