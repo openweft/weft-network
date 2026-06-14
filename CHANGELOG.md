@@ -5,6 +5,22 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.2] - 2026-06-14
+
+### Added
+
+- **Seed-at-startup + 30 s safety-net poller** (`internal/fips/poller.go`).
+  Closes the failure model where a freshly-restarted weft-network
+  had no events to replay and would briefly withdraw every active
+  /32 from upstream BGP on the first publish. The Poller now hydrates
+  `fips.Index` synchronously from `weft.ListFloatingIPs` via the new
+  `(*lifecycle.WeftClient).ListFloatingIPs(ctx)` BEFORE the
+  Subscriber goes live, then ticks every 30 s as a safety net
+  against missed NATS events. Every tick uses `Index.ReplaceAll`
+  (new) for an atomic full-state swap and dedups onChange per
+  affected network so a 5-FIP reshuffle on network N republishes
+  that router exactly once. 5 new tests, commit `965c778`.
+
 ## [0.3.1] - 2026-06-14
 
 ### Added
