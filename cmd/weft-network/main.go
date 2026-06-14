@@ -84,6 +84,31 @@ func routerStitchesNetwork(r routerstore.Router, networkUUID string) bool {
 	return false
 }
 
+// weftFIPSource adapts a *lifecycle.WeftClient into the
+// fips.SourceFn the poller expects — translates the
+// lifecycle.FIPSnapshot wire shape into fips.SourceFIP without
+// dragging lifecycle into the fips package.
+func weftFIPSource(w *lifecycle.WeftClient) fips.SourceFn {
+	return func(ctx context.Context) ([]fips.SourceFIP, error) {
+		snaps, err := w.ListFloatingIPs(ctx)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]fips.SourceFIP, len(snaps))
+		for i, s := range snaps {
+			out[i] = fips.SourceFIP{
+				UUID:        s.UUID,
+				Address:     s.Address,
+				NetworkUUID: s.NetworkUUID,
+				ProjectUUID: s.ProjectUUID,
+				MappedTo:    s.MappedTo,
+				Status:      s.Status,
+			}
+		}
+		return out, nil
+	}
+}
+
 // Build-time stamps populated via -ldflags "-X main.version=…".
 var (
 	version = "dev"
@@ -370,6 +395,25 @@ func run(cmd *cobra.Command, o runOpts) error {
 				idx := fips.New()
 				natsPub.SetFIPLookup(idx)
 				onChange := republishRoutersOnNetworkChange(cmd.Context(), logger, netServer.RouterStore(), natsPub)
+				// Seed-via-poller : if a WeftClient is wired,
+				// hydrate the index from weft.ListFloatingIPs
+				// BEFORE the subscriber goes live so the
+				// publisher's first call after restart doesn't
+				// withdraw every active /32 from upstream BGP.
+				// The poller keeps ticking as a safety net
+				// against missed NATS events.
+				if weftLC != nil {
+					poller := fips.NewPoller(idx, weftFIPSource(weftLC), 30*time.Second, logger, onChange)
+					if err := poller.Seed(cmd.Context()); err != nil {
+						logger.Warn("fip seed from weft failed ; index starts empty, the next event refills it",
+							"err", err)
+					} else {
+						logger.Info("fip index seeded from weft", "entries", len(idx.All()))
+					}
+					go func() {
+						_ = poller.Run(cmd.Context())
+					}()
+				}
 				sub, err := fips.NewSubscriber(fipNC, idx, logger, onChange)
 				if err != nil {
 					logger.Warn("fip subscriber construct failed ; skipping", "err", err)

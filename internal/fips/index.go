@@ -131,6 +131,102 @@ func (i *Index) ActiveFIPsInNetworks(networks []string) []string {
 	return out
 }
 
+// ReplaceAll atomically swaps the index contents for the supplied
+// snapshot. Returns three sets keyed by NetworkUUID identifying the
+// nature of the change :
+//
+//   * added   — networks that gained at least one Mapped entry
+//   * removed — networks that lost their last Mapped entry
+//   * churned — networks where a Mapped entry's Address changed but
+//               the count stayed > 0 (matters because the announce
+//               set itself changed even if the cardinality didn't)
+//
+// Callers feed each affected network into their republish trigger
+// so weft-router gets the updated /32 announce set on the next
+// reconcile. Used by the Poller's tick + by ad-hoc seed paths.
+func (i *Index) ReplaceAll(entries []Entry) (added, removed, churned map[string]struct{}) {
+	added = make(map[string]struct{})
+	removed = make(map[string]struct{})
+	churned = make(map[string]struct{})
+
+	i.mu.Lock()
+	defer i.mu.Unlock()
+
+	// Snapshot the prior per-network active address set.
+	priorActive := make(map[string]map[string]struct{})
+	for net, set := range i.netUUID {
+		acc := make(map[string]struct{}, len(set))
+		for uuid := range set {
+			e := i.byUUID[uuid]
+			if e.Mapped && e.Address != "" {
+				acc[e.Address] = struct{}{}
+			}
+		}
+		priorActive[net] = acc
+	}
+
+	// Rebuild from scratch.
+	i.byUUID = make(map[string]Entry, len(entries))
+	i.byAddr = make(map[string]string)
+	i.netUUID = make(map[string]map[string]struct{})
+	for _, e := range entries {
+		i.indexLocked(e)
+	}
+
+	// Compute deltas per network.
+	newActive := make(map[string]map[string]struct{})
+	for net, set := range i.netUUID {
+		acc := make(map[string]struct{}, len(set))
+		for uuid := range set {
+			e := i.byUUID[uuid]
+			if e.Mapped && e.Address != "" {
+				acc[e.Address] = struct{}{}
+			}
+		}
+		newActive[net] = acc
+	}
+
+	// Union of all networks touched in either snapshot.
+	allNets := make(map[string]struct{})
+	for net := range priorActive {
+		allNets[net] = struct{}{}
+	}
+	for net := range newActive {
+		allNets[net] = struct{}{}
+	}
+	for net := range allNets {
+		prior, hadPrior := priorActive[net]
+		next, hasNext := newActive[net]
+		if !hadPrior {
+			prior = nil
+		}
+		if !hasNext {
+			next = nil
+		}
+		switch {
+		case len(prior) == 0 && len(next) > 0:
+			added[net] = struct{}{}
+		case len(prior) > 0 && len(next) == 0:
+			removed[net] = struct{}{}
+		case !sameAddrSet(prior, next):
+			churned[net] = struct{}{}
+		}
+	}
+	return added, removed, churned
+}
+
+func sameAddrSet(a, b map[string]struct{}) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for addr := range a {
+		if _, ok := b[addr]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
 // All returns every entry in the index, sorted by UUID. Used by the
 // poller for initial-state-seeding diff against the authoritative
 // weft store, and by /metrics for the platform-wide gauge.

@@ -23,6 +23,22 @@ type agentClient interface {
 	StartVM(ctx context.Context, in *weftv1.StartVMRequest, opts ...grpc.CallOption) (*weftv1.StartVMResponse, error)
 	StopVM(ctx context.Context, in *weftv1.StopVMRequest, opts ...grpc.CallOption) (*weftv1.StopVMResponse, error)
 	DeleteVM(ctx context.Context, in *weftv1.DeleteVMRequest, opts ...grpc.CallOption) (*weftv1.DeleteVMResponse, error)
+	ListFloatingIPs(ctx context.Context, in *weftv1.ListFloatingIPsRequest, opts ...grpc.CallOption) (*weftv1.ListFloatingIPsResponse, error)
+}
+
+// FIPSnapshot is the lifecycle-side projection of weft's
+// FloatingIPInfo, used by the fips poller to seed + periodically
+// refresh its index without dragging the weft-proto types up the
+// call stack. Status is verbatim from weft : "active" when mapped,
+// "available" when allocated-but-unmapped ; the fips package's
+// adapter translates this into the Mapped boolean.
+type FIPSnapshot struct {
+	UUID        string
+	Address     string
+	NetworkUUID string
+	ProjectUUID string
+	MappedTo    string
+	Status      string
 }
 
 // WeftClient implements RouterLifecycle by calling the weft daemon's
@@ -157,6 +173,36 @@ func (w *WeftClient) Destroy(ctx context.Context, uuid string) error {
 	}
 	w.log.Info("router micro-VM destroyed", "router", uuid, "vm", name)
 	return nil
+}
+
+// ListFloatingIPs pulls every floating IP from weft (across all
+// visible projects — admin auth in production). Used by the fips
+// poller to seed its index at weft-network startup and as a safety
+// net against missed NATS events. The empty Project on the request
+// asks weft for the full visible set.
+func (w *WeftClient) ListFloatingIPs(ctx context.Context) ([]FIPSnapshot, error) {
+	resp, err := w.client.ListFloatingIPs(ctx, &weftv1.ListFloatingIPsRequest{})
+	if err != nil {
+		return nil, fmt.Errorf("ListFloatingIPs: %w", err)
+	}
+	if resp == nil {
+		return nil, nil
+	}
+	out := make([]FIPSnapshot, 0, len(resp.FloatingIps))
+	for _, f := range resp.FloatingIps {
+		if f == nil {
+			continue
+		}
+		out = append(out, FIPSnapshot{
+			UUID:        f.Uuid,
+			Address:     f.Address,
+			NetworkUUID: f.Network,
+			ProjectUUID: f.ProjectUuid,
+			MappedTo:    f.MappedTo,
+			Status:      f.Status,
+		})
+	}
+	return out, nil
 }
 
 // vmNameFor maps a Router uuid to the canonical weft VM name. Centralised

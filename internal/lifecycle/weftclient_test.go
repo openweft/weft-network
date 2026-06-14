@@ -22,6 +22,9 @@ type fakeAgent struct {
 	startCalls    []*weftv1.StartVMRequest
 	stopCalls     []*weftv1.StopVMRequest
 	deleteCalls   []*weftv1.DeleteVMRequest
+	listFIPCalls  []*weftv1.ListFloatingIPsRequest
+	listFIPResp   *weftv1.ListFloatingIPsResponse
+	listFIPErr    error
 	registerErr   error
 	startErr      error
 	stopErr       error
@@ -66,6 +69,22 @@ func (f *fakeAgent) DeleteVM(_ context.Context, in *weftv1.DeleteVMRequest, _ ..
 		return nil, f.deleteErr
 	}
 	return &weftv1.DeleteVMResponse{}, nil
+}
+
+// ListFloatingIPs : test stub returns the configured response or
+// error. Defaults to (empty response, nil) so tests that don't
+// care about FIPs aren't forced to populate the field.
+func (f *fakeAgent) ListFloatingIPs(_ context.Context, in *weftv1.ListFloatingIPsRequest, _ ...grpc.CallOption) (*weftv1.ListFloatingIPsResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.listFIPCalls = append(f.listFIPCalls, in)
+	if f.listFIPErr != nil {
+		return nil, f.listFIPErr
+	}
+	if f.listFIPResp != nil {
+		return f.listFIPResp, nil
+	}
+	return &weftv1.ListFloatingIPsResponse{}, nil
 }
 
 func newWeftClientForTest(image, project string, c agentClient) *WeftClient {
