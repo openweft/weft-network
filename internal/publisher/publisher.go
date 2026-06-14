@@ -21,6 +21,7 @@ package publisher
 import (
 	"context"
 	"log/slog"
+	"net/netip"
 
 	"github.com/openweft/weft-network/internal/store/router"
 )
@@ -100,11 +101,39 @@ func SubjectFor(uuid string) string {
 	return "weft.router." + uuid + ".config"
 }
 
+// FIPLookup returns the active floating-IP addresses bound to VMs on
+// the supplied tenant networks. The publisher consumes this on every
+// Publish so the resulting BGP announce set tracks live mappings —
+// when a tenant maps an FIP, weft-router learns about it on the next
+// reconcile.
+//
+// Returned addresses are bare ("203.0.113.42") ; StateFor converts
+// them to /32 (or /128 for IPv6) PrefixAdvertisements. nil → no FIPs
+// (compatible with the Noop default).
+type FIPLookup interface {
+	ActiveFIPsInNetworks(networks []string) []string
+}
+
+// NoopFIPLookup returns the empty address list. Used in tests and
+// before a real lookup is wired ; preserves backward-compatible
+// "operator-typed Prefixes only" behaviour.
+type NoopFIPLookup struct{}
+
+// ActiveFIPsInNetworks returns nil — the platform isn't pushing
+// dynamic FIP routes.
+func (NoopFIPLookup) ActiveFIPsInNetworks([]string) []string { return nil }
+
 // StateFor builds the DesiredState from a Router. For kind=peer routers
 // (WireGuard, not BGP), returns an empty DesiredState — the WireGuard
 // path is reconciled by a different surface. For kind=egress routers
 // with backend != "gobgp" (the VyOS / FRR escape hatch), also empty :
 // those are classic-VM-managed, not weft-router.
+//
+// FIPs : on top of the operator-supplied Prefixes, the function calls
+// fips.ActiveFIPsInNetworks(r.Networks) and appends each active
+// floating IP as a /32 (or /128 for v6) PrefixAdvertisement. Passing
+// nil fips disables that path (same as NoopFIPLookup) — keeps the
+// existing tests + scaffold callers compiling without a stub.
 //
 // External parsing : the proto's `External` field is a single string
 // ; today we support either a bare peer IP ("198.51.100.1") or a
@@ -112,7 +141,7 @@ func SubjectFor(uuid string) string {
 // from the router's owning project ; for the scaffold we leave it 0
 // and let weft-router complain — when the proto grows a structured
 // External, this helper grows with it.
-func StateFor(r router.Router) DesiredState {
+func StateFor(r router.Router, fips FIPLookup) DesiredState {
 	if r.Kind != "egress" || r.Backend != "gobgp" {
 		return DesiredState{}
 	}
@@ -124,8 +153,30 @@ func StateFor(r router.Router) DesiredState {
 	for _, cidr := range r.Prefixes {
 		prefixes = append(prefixes, PrefixAdvertisement{Prefix: cidr})
 	}
+	if fips != nil {
+		for _, addr := range fips.ActiveFIPsInNetworks(r.Networks) {
+			if cidr := singleHostCIDR(addr); cidr != "" {
+				prefixes = append(prefixes, PrefixAdvertisement{Prefix: cidr})
+			}
+		}
+	}
 	return DesiredState{
 		Peers:    []PeerConfig{peer},
 		Prefixes: prefixes,
 	}
+}
+
+// singleHostCIDR turns a bare IP into the /32 (IPv4) or /128 (IPv6)
+// CIDR a BGP UPDATE expects. Returns "" when ip can't be parsed —
+// the caller skips the entry rather than poison the announce set
+// with a malformed prefix.
+func singleHostCIDR(ip string) string {
+	addr, err := netip.ParseAddr(ip)
+	if err != nil {
+		return ""
+	}
+	if addr.Is4() {
+		return addr.String() + "/32"
+	}
+	return addr.String() + "/128"
 }

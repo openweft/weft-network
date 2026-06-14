@@ -23,6 +23,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/openweft/weft-network/internal/fips"
 	"github.com/openweft/weft-network/internal/lifecycle"
 	"github.com/openweft/weft-network/internal/metrics"
 	"github.com/openweft/weft-network/internal/publisher"
@@ -31,12 +32,57 @@ import (
 	"github.com/openweft/weft-network/internal/tlsutil"
 	"github.com/openweft/weft-network/internal/tracing"
 	weftslognats "github.com/openweft/weft-slognats"
+	"github.com/nats-io/nats.go"
 	"github.com/spf13/cobra"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 
 	netv1 "github.com/openweft/weft-network-proto"
+
+	routerstore "github.com/openweft/weft-network/internal/store/router"
 )
+
+// republishRoutersOnNetworkChange returns the onChange callback the
+// fips.Subscriber invokes on every FIP mutation. It lists every
+// router stitching the affected network and re-Publishes each
+// through the same publisher.NATS used for CreateRouter, so the
+// router's GoBGP server picks up the new /32 announce set within
+// one publish round-trip.
+//
+// Listed once per event ; fan-out is bounded by the router count
+// (small : one per tenant ASN). Errors log + skip — a re-publish
+// missing one router doesn't poison the rest, and the next event
+// catches up.
+func republishRoutersOnNetworkChange(ctx context.Context, log *slog.Logger, store routerstore.Store, pub *publisher.NATS) func(networkUUID string) {
+	return func(networkUUID string) {
+		routers, err := store.List(ctx, routerstore.ListFilter{})
+		if err != nil {
+			log.Warn("fip republish: list routers failed", "network", networkUUID, "err", err)
+			return
+		}
+		for _, r := range routers {
+			if !routerStitchesNetwork(r, networkUUID) {
+				continue
+			}
+			if err := pub.Publish(ctx, r); err != nil {
+				log.Warn("fip republish failed", "router", r.UUID, "network", networkUUID, "err", err)
+			}
+		}
+	}
+}
+
+// routerStitchesNetwork reports whether r's Networks list contains
+// networkUUID. Inlined here so the helper doesn't need its own
+// file ; the slice is small (one router rarely stitches more than
+// 2-3 tenant networks).
+func routerStitchesNetwork(r routerstore.Router, networkUUID string) bool {
+	for _, n := range r.Networks {
+		if n == networkUUID {
+			return true
+		}
+	}
+	return false
+}
 
 // Build-time stamps populated via -ldflags "-X main.version=…".
 var (
@@ -298,6 +344,46 @@ func run(cmd *cobra.Command, o runOpts) error {
 		} else {
 			defer recv.Stop()
 			logger.Info("status receiver wired", "nats_url", o.natsURL)
+		}
+	}
+
+	// Floating-IP subscriber : listens for "floating_ip.*"
+	// PlatformEvents on the weft event bus, maintains an in-memory
+	// per-network active-FIP index, and re-publishes every router
+	// stitching the affected network on each mutation. Together with
+	// publisher.SetFIPLookup this is what makes weft-router announce
+	// floating IPs as /32 (or /128) BGP prefixes to the upstream peer.
+	//
+	// Skipped when --nats is empty (the platform event bus is also
+	// NATS-backed in production — without it weft can't reach
+	// weft-network and FIPs stay host-NAT only, which is a valid
+	// single-host dev mode).
+	if o.natsURL != "" {
+		if natsPub, ok := routerPub.(*publisher.NATS); ok {
+			fipNC, err := nats.Connect(o.natsURL,
+				nats.Name("weft-network/fip-subscriber"),
+				nats.MaxReconnects(-1))
+			if err != nil {
+				logger.Warn("fip subscriber connect failed ; FIPs will not appear in BGP",
+					"url", o.natsURL, "err", err)
+			} else {
+				idx := fips.New()
+				natsPub.SetFIPLookup(idx)
+				onChange := republishRoutersOnNetworkChange(cmd.Context(), logger, netServer.RouterStore(), natsPub)
+				sub, err := fips.NewSubscriber(fipNC, idx, logger, onChange)
+				if err != nil {
+					logger.Warn("fip subscriber construct failed ; skipping", "err", err)
+					fipNC.Close()
+				} else {
+					go func() {
+						if err := sub.Run(cmd.Context()); err != nil && err != context.Canceled {
+							logger.Warn("fip subscriber exited", "err", err)
+						}
+					}()
+					defer fipNC.Close()
+					logger.Info("fip subscriber wired", "subject", fips.Subject)
+				}
+			}
 		}
 	}
 

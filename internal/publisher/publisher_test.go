@@ -50,11 +50,11 @@ func TestParseExternalPeer(t *testing.T) {
 
 func TestStateFor(t *testing.T) {
 	// kind=peer → empty state (WireGuard is reconciled by a different surface).
-	if s := StateFor(router.Router{Kind: "peer", Backend: "wireguard"}); len(s.Peers) != 0 || len(s.Prefixes) != 0 {
+	if s := StateFor(router.Router{Kind: "peer", Backend: "wireguard"}, nil); len(s.Peers) != 0 || len(s.Prefixes) != 0 {
 		t.Errorf("peer router shouldn't emit state: %+v", s)
 	}
 	// kind=egress + backend=vyos → empty (classic-VM escape hatch, not weft-router).
-	if s := StateFor(router.Router{Kind: "egress", Backend: "vyos", External: "198.51.100.1"}); len(s.Peers) != 0 {
+	if s := StateFor(router.Router{Kind: "egress", Backend: "vyos", External: "198.51.100.1"}, nil); len(s.Peers) != 0 {
 		t.Errorf("vyos egress shouldn't emit state: %+v", s)
 	}
 	// kind=egress + backend=gobgp → one peer parsed from External
@@ -63,7 +63,7 @@ func TestStateFor(t *testing.T) {
 		Kind: "egress", Backend: "gobgp", External: "65512:198.51.100.1",
 		Prefixes: []string{"203.0.113.0/24", "2001:db8::/32"},
 	}
-	s := StateFor(r)
+	s := StateFor(r, nil)
 	if len(s.Peers) != 1 {
 		t.Fatalf("gobgp egress should emit one peer, got %d", len(s.Peers))
 	}
@@ -80,7 +80,7 @@ func TestStateForWireRoundTrip(t *testing.T) {
 	// subscriber.DesiredState. Pin it here so a future field rename
 	// trips this test before silently breaking the reconcile loop.
 	r := router.Router{Kind: "egress", Backend: "gobgp", External: "65000:203.0.113.1"}
-	state := StateFor(r)
+	state := StateFor(r, nil)
 	b, err := json.Marshal(state)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)

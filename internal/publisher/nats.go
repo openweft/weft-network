@@ -34,6 +34,7 @@ var tracer trace.Tracer = otel.Tracer("github.com/openweft/weft-network/internal
 type NATS struct {
 	conn *nats.Conn
 	log  *slog.Logger
+	fips FIPLookup
 }
 
 // NewNATS dials the given NATS URL with the provided options and
@@ -54,7 +55,21 @@ func NewNATS(log *slog.Logger, url string, opts ...nats.Option) (*NATS, error) {
 	if err != nil {
 		return nil, fmt.Errorf("nats connect %s: %w", url, err)
 	}
-	return &NATS{conn: nc, log: log}, nil
+	return &NATS{conn: nc, log: log, fips: NoopFIPLookup{}}, nil
+}
+
+// SetFIPLookup swaps the publisher's active-FIP source. Safe to call
+// after NewNATS but BEFORE the publisher is shared — the field isn't
+// guarded since the production wiring sets it once at startup and
+// never mutates it. Tests call this to inject a stub.
+func (n *NATS) SetFIPLookup(fips FIPLookup) {
+	if n == nil {
+		return
+	}
+	if fips == nil {
+		fips = NoopFIPLookup{}
+	}
+	n.fips = fips
 }
 
 // Close drains the NATS connection. Idempotent.
@@ -80,7 +95,7 @@ func (n *NATS) Publish(ctx context.Context, r router.Router) error {
 		))
 	defer span.End()
 
-	state := StateFor(r)
+	state := StateFor(r, n.fips)
 	if len(state.Peers) == 0 && len(state.Prefixes) == 0 {
 		// Nothing actionable — peer router or escape-hatch egress.
 		// Log so the operator can confirm intent.
