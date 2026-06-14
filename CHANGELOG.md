@@ -5,6 +5,38 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-06-14
+
+### Added
+
+- **Floating IPs announced as /32 BGP prefixes** via the existing
+  per-tenant `weft-router` microVM. Closes the loop between weft's
+  host-side nftables NAT and the public Internet : any mapped FIP
+  now ALSO travels as a single-host BGP UPDATE to the upstream peer,
+  alongside the operator-typed Prefixes. weft-router itself needed
+  zero changes — GoBGP accepts /32 + /128 via the existing
+  `bgp.ApplyPrefixes` path.
+- **New package `internal/fips/`** : thread-safe per-network
+  active-FIP index (`Index`) + NATS wildcard subscriber on
+  `weft.events.floating_ip.>` (`Subscriber`). Reacts to
+  allocated/mapped/unmapped/released ; surfaces only Mapped entries
+  to `ActiveFIPsInNetworks` so available-but-unmapped FIPs don't
+  pollute the BGP announce set. Decode failures + unknown kinds
+  log + drop ; the next event self-heals.
+- **`publisher.FIPLookup` interface** + `(*publisher.NATS).SetFIPLookup`.
+  `StateFor` now appends every active FIP in the router's stitched
+  networks as a /32 (v4) or /128 (v6) `PrefixAdvertisement`. `nil` /
+  `NoopFIPLookup` keep the legacy "operator-typed Prefixes only"
+  behaviour so pre-existing scaffold callers compile without churn.
+- **`cmd/weft-network` wiring** : when `--nats` is set, spin a
+  dedicated `fip-subscriber` NATS connection, hand the Index to
+  the publisher via `SetFIPLookup`, and on every FIP mutation
+  re-Publish every router stitching the affected network so
+  GoBGP picks up the new announce set within one round-trip.
+
+13 new tests (6 index + 3 subscriber + 4 publisher), full repo
+suite green. Commit `71dd435`.
+
 ## [0.2.0] - 2026-06-02
 
 v0.2.0-track work since `v0.1.0` (`cc3b880`).
