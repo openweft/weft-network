@@ -93,11 +93,14 @@ func (p *Poller) Seed(ctx context.Context) error {
 }
 
 func (p *Poller) tick(ctx context.Context, why string) error {
+	ensureRegistered()
 	items, err := p.src(ctx)
 	if err != nil {
+		pollerTicksTotal.WithLabelValues(why, "err").Inc()
 		p.log.Warn("fips poller: source fetch failed", "why", why, "err", err)
 		return err
 	}
+	pollerTicksTotal.WithLabelValues(why, "ok").Inc()
 	entries := make([]Entry, 0, len(items))
 	for _, it := range items {
 		entries = append(entries, Entry{
@@ -110,6 +113,9 @@ func (p *Poller) tick(ctx context.Context, why string) error {
 		})
 	}
 	added, removed, churned := p.idx.ReplaceAll(entries)
+	pollerChanges.WithLabelValues("added").Add(float64(len(added)))
+	pollerChanges.WithLabelValues("removed").Add(float64(len(removed)))
+	pollerChanges.WithLabelValues("churned").Add(float64(len(churned)))
 	if (len(added)+len(removed)+len(churned)) > 0 && p.onChange != nil {
 		// Walk the union of affected networks and fire onChange.
 		// Pass each network once — the callback typically does a

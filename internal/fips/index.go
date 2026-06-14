@@ -78,24 +78,28 @@ func New() *Index {
 // in lockstep — Mapped flips don't leak stale state.
 func (i *Index) Upsert(e Entry) Entry {
 	i.mu.Lock()
-	defer i.mu.Unlock()
 	prev := i.byUUID[e.UUID]
 	if prev.UUID != "" {
 		i.unindexLocked(prev)
 	}
 	i.indexLocked(e)
+	touched := networksTouched(prev, e)
+	i.refreshGaugeLocked(touched)
+	i.mu.Unlock()
 	return prev
 }
 
 // Delete removes the entry for uuid. Idempotent on absent.
 func (i *Index) Delete(uuid string) Entry {
 	i.mu.Lock()
-	defer i.mu.Unlock()
 	prev, ok := i.byUUID[uuid]
 	if !ok {
+		i.mu.Unlock()
 		return Entry{}
 	}
 	i.unindexLocked(prev)
+	i.refreshGaugeLocked(map[string]struct{}{prev.NetworkUUID: {}})
+	i.mu.Unlock()
 	return prev
 }
 
@@ -212,6 +216,7 @@ func (i *Index) ReplaceAll(entries []Entry) (added, removed, churned map[string]
 			churned[net] = struct{}{}
 		}
 	}
+	i.refreshGaugeLocked(allNets)
 	return added, removed, churned
 }
 
@@ -268,3 +273,43 @@ func (i *Index) unindexLocked(e Entry) {
 }
 
 func addrKey(network, address string) string { return network + "\x00" + address }
+
+// networksTouched returns the union of the prior + next entry's
+// NetworkUUID, used as the input to refreshGaugeLocked on Upsert.
+// An entry that moves between networks (NetworkUUID flip) must
+// rewrite the gauge for both labels.
+func networksTouched(prev, next Entry) map[string]struct{} {
+	out := make(map[string]struct{}, 2)
+	if prev.NetworkUUID != "" {
+		out[prev.NetworkUUID] = struct{}{}
+	}
+	if next.NetworkUUID != "" {
+		out[next.NetworkUUID] = struct{}{}
+	}
+	return out
+}
+
+// refreshGaugeLocked recomputes the active-FIP count for every
+// network in touched and writes it to indexEntries. Caller must hold
+// i.mu (Upsert/Delete/ReplaceAll already do). Networks that drop to
+// zero get an explicit 0 — important so a network whose last FIP was
+// released doesn't keep reporting a stale non-zero value.
+func (i *Index) refreshGaugeLocked(touched map[string]struct{}) {
+	if len(touched) == 0 {
+		return
+	}
+	ensureRegistered()
+	for net := range touched {
+		if net == "" {
+			continue
+		}
+		var n int
+		for uuid := range i.netUUID[net] {
+			e := i.byUUID[uuid]
+			if e.Mapped && e.Address != "" {
+				n++
+			}
+		}
+		indexEntries.WithLabelValues(net).Set(float64(n))
+	}
+}

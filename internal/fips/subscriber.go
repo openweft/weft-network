@@ -110,6 +110,7 @@ func (s *Subscriber) handle(subject string, data []byte) {
 		Target:      ev.Meta["target"],
 	}
 	var changedNetwork string
+	ensureRegistered()
 	switch ev.Kind {
 	case "floating_ip.allocated":
 		entry.Mapped = false
@@ -117,22 +118,27 @@ func (s *Subscriber) handle(subject string, data []byte) {
 		entry.Target = ""
 		s.idx.Upsert(entry)
 		changedNetwork = entry.NetworkUUID
+		subscriberEventsTotal.WithLabelValues("allocated").Inc()
 	case "floating_ip.mapped":
 		entry.Mapped = true
 		s.idx.Upsert(entry)
 		changedNetwork = entry.NetworkUUID
+		subscriberEventsTotal.WithLabelValues("mapped").Inc()
 	case "floating_ip.unmapped":
 		entry.Mapped = false
 		entry.TargetKind = ""
 		entry.Target = ""
 		s.idx.Upsert(entry)
 		changedNetwork = entry.NetworkUUID
+		subscriberEventsTotal.WithLabelValues("unmapped").Inc()
 	case "floating_ip.released":
 		prev := s.idx.Delete(ev.Subject)
 		changedNetwork = prev.NetworkUUID
+		subscriberEventsTotal.WithLabelValues("released").Inc()
 	default:
 		// Wildcard occasionally surfaces siblings we don't react
 		// to ; silently drop.
+		subscriberEventsTotal.WithLabelValues("unknown").Inc()
 		return
 	}
 	if changedNetwork != "" && s.onChange != nil {
