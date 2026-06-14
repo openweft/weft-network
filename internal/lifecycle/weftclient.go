@@ -131,47 +131,61 @@ func (w *WeftClient) Ensure(ctx context.Context, r router.Router) error {
 	if r.Kind != "egress" || r.Backend != "gobgp" {
 		return nil
 	}
-	name := vmNameFor(r.UUID)
-
-	if _, err := w.client.RegisterMicroVM(ctx, &weftv1.RegisterMicroVMRequest{
-		Name:    name,
-		Project: w.project,
-		Image:   w.image,
-	}); err != nil && status.Code(err) != codes.AlreadyExists {
-		return fmt.Errorf("RegisterMicroVM %s: %w", name, err)
-	}
-
-	if _, err := w.client.StartVM(ctx, &weftv1.StartVMRequest{
-		Name:    name,
-		Project: w.project,
-	}); err != nil {
-		switch status.Code(err) {
-		case codes.AlreadyExists, codes.FailedPrecondition:
-			// VM already running — fine.
-		default:
-			return fmt.Errorf("StartVM %s: %w", name, err)
+	names := vmNamesFor(r.UUID, r.Replicas)
+	for _, name := range names {
+		if _, err := w.client.RegisterMicroVM(ctx, &weftv1.RegisterMicroVMRequest{
+			Name:    name,
+			Project: w.project,
+			Image:   w.image,
+		}); err != nil && status.Code(err) != codes.AlreadyExists {
+			return fmt.Errorf("RegisterMicroVM %s: %w", name, err)
 		}
+
+		if _, err := w.client.StartVM(ctx, &weftv1.StartVMRequest{
+			Name:    name,
+			Project: w.project,
+		}); err != nil {
+			switch status.Code(err) {
+			case codes.AlreadyExists, codes.FailedPrecondition:
+				// VM already running — fine.
+			default:
+				return fmt.Errorf("StartVM %s: %w", name, err)
+			}
+		}
+		w.log.Info("router micro-VM ensured", "router", r.UUID, "vm", name, "image", w.image)
 	}
-	w.log.Info("router micro-VM ensured", "router", r.UUID, "vm", name, "image", w.image)
 	return nil
 }
 
-// Destroy tears down the matching micro-VM. Tolerates NotFound at
-// each step — the orchestrator never errors on "already gone".
+// Destroy tears down every matching micro-VM. The store-side
+// RouterLifecycle.Destroy contract only carries the uuid, not the
+// replica count — we probe both the legacy single-name layout
+// ("weft-router-<uuid>") AND the multi-replica layout up to the
+// orchestrator cap of 10. NotFound on either StopVM or DeleteVM
+// is tolerated (idempotent : "already gone"), so a router that
+// was created with replicas=1 cleans up in one round and the
+// probe of higher indices is cheap (one NotFound RPC each).
 func (w *WeftClient) Destroy(ctx context.Context, uuid string) error {
-	name := vmNameFor(uuid)
-	if _, err := w.client.StopVM(ctx, &weftv1.StopVMRequest{Name: name, Project: w.project}); err != nil {
-		if status.Code(err) != codes.NotFound {
-			w.log.Warn("StopVM failed (continuing to DeleteVM)", "vm", name, "err", err)
+	// Try the legacy bare name first + every replicated suffix
+	// up to maxReplicas. We don't know how many replicas were
+	// configured at create time once the Router has been deleted
+	// from the store ; the bounded probe is the simplest way to
+	// avoid leaking microVMs.
+	names := append([]string{vmBareName(uuid)}, replicaNames(uuid, maxReplicas)...)
+	for _, name := range names {
+		if _, err := w.client.StopVM(ctx, &weftv1.StopVMRequest{Name: name, Project: w.project}); err != nil {
+			if status.Code(err) != codes.NotFound {
+				w.log.Warn("StopVM failed (continuing to DeleteVM)", "vm", name, "err", err)
+			}
 		}
-	}
-	if _, err := w.client.DeleteVM(ctx, &weftv1.DeleteVMRequest{Name: name, Project: w.project}); err != nil {
-		if status.Code(err) == codes.NotFound {
-			return nil
+		if _, err := w.client.DeleteVM(ctx, &weftv1.DeleteVMRequest{Name: name, Project: w.project}); err != nil {
+			if status.Code(err) == codes.NotFound {
+				continue
+			}
+			return fmt.Errorf("DeleteVM %s: %w", name, err)
 		}
-		return fmt.Errorf("DeleteVM %s: %w", name, err)
+		w.log.Info("router micro-VM destroyed", "router", uuid, "vm", name)
 	}
-	w.log.Info("router micro-VM destroyed", "router", uuid, "vm", name)
 	return nil
 }
 
@@ -205,8 +219,49 @@ func (w *WeftClient) ListFloatingIPs(ctx context.Context) ([]FIPSnapshot, error)
 	return out, nil
 }
 
-// vmNameFor maps a Router uuid to the canonical weft VM name. Centralised
-// so Ensure / Destroy / future status-fetch all agree on the mapping.
-func vmNameFor(routerUUID string) string {
+// maxReplicas caps the number of weft-router microVMs the
+// orchestrator will spawn per Router. Matches the server-side
+// validation in internal/server/router.go ; the probe loop in
+// Destroy reuses this as the upper bound when tearing down a
+// router whose replica count is no longer available.
+const maxReplicas = 10
+
+// vmBareName is the single-VM legacy layout : "weft-router-<uuid>".
+// Returned by vmNamesFor when replicas == 1 so single-replica
+// routers keep their pre-multi-replica name unchanged (operator
+// workflows + status receiver subjects don't need to migrate).
+func vmBareName(routerUUID string) string {
 	return "weft-router-" + routerUUID
+}
+
+// vmNamesFor returns the deterministic VM names for the N replicas
+// of one Router. replicas <= 1 collapses to the single legacy name
+// ("weft-router-<uuid>") ; replicas >= 2 returns the indexed names
+// ("weft-router-<uuid>-1", "-2", ...). All names sort
+// lexicographically by index so the order is stable across calls.
+func vmNamesFor(routerUUID string, replicas int) []string {
+	if replicas <= 1 {
+		return []string{vmBareName(routerUUID)}
+	}
+	if replicas > maxReplicas {
+		replicas = maxReplicas
+	}
+	return replicaNames(routerUUID, replicas)
+}
+
+// replicaNames is the indexed-suffix slice ("-1", "-2", ...) used
+// by both vmNamesFor (Ensure) and Destroy's probe loop.
+func replicaNames(routerUUID string, n int) []string {
+	out := make([]string, n)
+	for i := 0; i < n; i++ {
+		out[i] = "weft-router-" + routerUUID + "-" + itoa(i+1)
+	}
+	return out
+}
+
+// itoa is a tiny strconv.Itoa replacement to keep the file
+// import-light (this file already pulls fmt, but Itoa is the only
+// caller we'd need strconv for).
+func itoa(n int) string {
+	return fmt.Sprintf("%d", n)
 }

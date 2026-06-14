@@ -188,7 +188,14 @@ func TestEnsure_OtherErrorsPropagate(t *testing.T) {
 	}
 }
 
-func TestDestroy_StopThenDelete(t *testing.T) {
+func TestDestroy_ProbesLegacyPlusReplicas(t *testing.T) {
+	// Destroy doesn't know how many replicas the Router was
+	// created with (the store row is already gone by the time
+	// Destroy is called), so it probes the legacy bare name
+	// AND the indexed-suffix layout up to maxReplicas. Each
+	// probe is one StopVM + one DeleteVM RPC ; NotFound is
+	// tolerated on either, so a single-replica router cleans up
+	// in 11 cheap RPCs without leaking microVMs.
 	fa := &fakeAgent{}
 	w := newWeftClientForTest("img", "p", fa)
 	if err := w.Destroy(context.Background(), "r1"); err != nil {
@@ -196,11 +203,20 @@ func TestDestroy_StopThenDelete(t *testing.T) {
 	}
 	fa.mu.Lock()
 	defer fa.mu.Unlock()
-	if len(fa.stopCalls) != 1 || fa.stopCalls[0].Name != "weft-router-r1" {
-		t.Errorf("stop calls = %v", fa.stopCalls)
+	wantNames := []string{"weft-router-r1"}
+	for i := 1; i <= maxReplicas; i++ {
+		wantNames = append(wantNames, "weft-router-r1-"+itoa(i))
 	}
-	if len(fa.deleteCalls) != 1 || fa.deleteCalls[0].Name != "weft-router-r1" {
-		t.Errorf("delete calls = %v", fa.deleteCalls)
+	if len(fa.stopCalls) != len(wantNames) {
+		t.Fatalf("stop calls = %d, want %d", len(fa.stopCalls), len(wantNames))
+	}
+	for i, want := range wantNames {
+		if fa.stopCalls[i].Name != want {
+			t.Errorf("stop[%d] name = %q, want %q", i, fa.stopCalls[i].Name, want)
+		}
+		if fa.deleteCalls[i].Name != want {
+			t.Errorf("delete[%d] name = %q, want %q", i, fa.deleteCalls[i].Name, want)
+		}
 	}
 }
 
@@ -225,8 +241,55 @@ func TestDestroy_DeleteOtherErrorPropagates(t *testing.T) {
 	}
 }
 
-func TestVmNameFor(t *testing.T) {
-	if got := vmNameFor("abc-123"); got != "weft-router-abc-123" {
-		t.Errorf("vmNameFor = %q", got)
+func TestVMNaming(t *testing.T) {
+	if got := vmBareName("abc-123"); got != "weft-router-abc-123" {
+		t.Errorf("vmBareName = %q", got)
+	}
+	// replicas <= 1 keeps the legacy single-name layout so existing
+	// single-VM routers don't get renamed on a daemon upgrade.
+	if got := vmNamesFor("abc", 0); len(got) != 1 || got[0] != "weft-router-abc" {
+		t.Errorf("vmNamesFor(_, 0) = %v", got)
+	}
+	if got := vmNamesFor("abc", 1); len(got) != 1 || got[0] != "weft-router-abc" {
+		t.Errorf("vmNamesFor(_, 1) = %v", got)
+	}
+	// replicas >= 2 uses the indexed-suffix layout.
+	want := []string{"weft-router-abc-1", "weft-router-abc-2", "weft-router-abc-3"}
+	got := vmNamesFor("abc", 3)
+	if len(got) != len(want) {
+		t.Fatalf("vmNamesFor(_, 3) len = %d, want %d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("vmNamesFor(_, 3)[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+	// Cap at maxReplicas.
+	if got := vmNamesFor("abc", 100); len(got) != maxReplicas {
+		t.Errorf("vmNamesFor(_, 100) len = %d, want %d", len(got), maxReplicas)
+	}
+}
+
+func TestEnsure_GobgpEgress_ReplicasSpawnsN(t *testing.T) {
+	fa := &fakeAgent{}
+	w := newWeftClientForTest("ghcr.io/openweft/weft-router:v0.1.0", "platform", fa)
+	r := router.Router{
+		UUID: "r1", Name: "r1", Kind: "egress", Backend: "gobgp", Replicas: 3,
+		External: "65512:198.51.100.1",
+	}
+	if err := w.Ensure(context.Background(), r); err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	fa.mu.Lock()
+	defer fa.mu.Unlock()
+	if len(fa.registerCalls) != 3 || len(fa.startCalls) != 3 {
+		t.Errorf("expected 3 RegisterMicroVM + 3 StartVM calls, got %d+%d",
+			len(fa.registerCalls), len(fa.startCalls))
+	}
+	wantNames := []string{"weft-router-r1-1", "weft-router-r1-2", "weft-router-r1-3"}
+	for i, want := range wantNames {
+		if fa.registerCalls[i].GetName() != want {
+			t.Errorf("RegisterMicroVM[%d] name = %q, want %q", i, fa.registerCalls[i].GetName(), want)
+		}
 	}
 }

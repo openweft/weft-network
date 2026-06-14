@@ -78,6 +78,14 @@ func (s *Server) CreateRouter(ctx context.Context, req *netv1.CreateRouterReques
 	if kind == "egress" && strings.TrimSpace(req.GetExternal()) == "" {
 		return nil, status.Error(codes.InvalidArgument, "egress routers must declare external (AS / peer)")
 	}
+	replicas := int(req.GetReplicas())
+	if replicas <= 0 {
+		replicas = 1 // single-VM default ; production HA opts into 2-3
+	}
+	if replicas > 10 {
+		return nil, status.Errorf(codes.InvalidArgument,
+			"replicas %d exceeds the orchestrator cap of 10 ; pick 1-10", replicas)
+	}
 	r := router.Router{
 		UUID:        newUUID(),
 		Name:        name,
@@ -86,6 +94,7 @@ func (s *Server) CreateRouter(ctx context.Context, req *netv1.CreateRouterReques
 		Networks:    append([]string(nil), req.GetNetworks()...),
 		External:    strings.TrimSpace(req.GetExternal()),
 		Prefixes:    append([]string(nil), req.GetPrefixes()...),
+		Replicas:    replicas,
 		Project:     req.GetProject(),
 		Status:      "configuring", // until the reconciler reports active
 		CreatedAtNs: time.Now().UnixNano(),

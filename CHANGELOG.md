@@ -5,6 +5,39 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.5] - 2026-06-14
+
+### Added
+
+- **weft-router multi-replica HA**. Eliminates the second SPOF
+  flagged in the HA audit : the single weft-router microVM per
+  tenant ASN. New `Replicas` field on `RouterInfo` +
+  `CreateRouterRequest` (proto v0.1.1) ; 1 ≤ replicas ≤ 10,
+  default 1 (backward-compat single-VM). With replicas ≥ 2 the
+  orchestrator spawns N weft-router microVMs with deterministic
+  names ("weft-router-<uuid>-1", "-2", ...) ; all subscribe to
+  the same NATS config subject and advertise the same prefixes,
+  so the upstream peer load-balances inbound traffic via BGP
+  multipath (ECMP). One replica down → upstream redistributes
+  within one BGP keepalive window ; the others stay live.
+
+  - `lifecycle.WeftClient.Ensure` loops over N names. `Destroy`
+    probes the legacy single name + every indexed suffix up to
+    `maxReplicas` (10) so a router whose replica count is no
+    longer in the store gets cleaned up without leaks. Each
+    probe tolerates NotFound (idempotent : "already gone").
+  - `internal/server/router.go` validates `replicas` on
+    CreateRouter ; 0 → 1 (default) ; > 10 → InvalidArgument.
+  - `store/router/router.go` Router struct grows `Replicas int`,
+    serialised through `ToProto` and the JSON-backed etcd store.
+  - Single-VM routers keep their legacy "weft-router-<uuid>" name
+    (no rename on upgrade).
+
+  Tests : 7 new in `internal/lifecycle/weftclient_test.go`
+  (vmBareName + vmNamesFor across 0/1/3/cap inputs, Ensure
+  spawns N register+start calls with indexed names, Destroy
+  probes legacy + 10 indexed names). Full suite green.
+
 ## [0.3.4] - 2026-06-14
 
 ### Added

@@ -28,6 +28,13 @@ type Router struct {
 	Networks    []string // tenant networks this router stitches
 	External    string   // AS number / peer IP — only for kind=egress
 	Prefixes    []string // CIDRs the router advertises (kind=egress + backend=gobgp)
+	// Replicas is the number of weft-router microVMs spawned for this
+	// router. Default 1 ; production HA setup is 2 or 3 spread across
+	// DCs/AZs. All replicas advertise the same prefixes — the upstream
+	// peer load-balances inbound traffic via BGP multipath (ECMP).
+	// One replica down → upstream redistributes within a BGP keepalive
+	// window. Capped at 10 by the orchestrator.
+	Replicas    int
 	PeerState   string
 	Project     string
 	Status      string
@@ -44,6 +51,7 @@ func (r Router) ToProto() *netv1.RouterInfo {
 		Networks:        append([]string(nil), r.Networks...),
 		External:        r.External,
 		Prefixes:        append([]string(nil), r.Prefixes...),
+		Replicas:        int32(r.Replicas),
 		PeerState:       r.PeerState,
 		Project:         r.Project,
 		Status:          r.Status,
