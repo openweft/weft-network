@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"sync/atomic"
 
 	"github.com/nats-io/nats.go"
 	"go.opentelemetry.io/otel"
@@ -34,7 +35,11 @@ var tracer trace.Tracer = otel.Tracer("github.com/openweft/weft-network/internal
 type NATS struct {
 	conn *nats.Conn
 	log  *slog.Logger
-	fips FIPLookup
+	// fips is swapped from a leader-election callback after the
+	// server is already serving traffic (see cmd/weft-network/main.go
+	// startFIPLoops). atomic.Value gives lock-free reads in the hot
+	// Publish path + a single torn-free swap on Set.
+	fips atomic.Value // holds FIPLookup
 }
 
 // NewNATS dials the given NATS URL with the provided options and
@@ -55,13 +60,15 @@ func NewNATS(log *slog.Logger, url string, opts ...nats.Option) (*NATS, error) {
 	if err != nil {
 		return nil, fmt.Errorf("nats connect %s: %w", url, err)
 	}
-	return &NATS{conn: nc, log: log, fips: NoopFIPLookup{}}, nil
+	out := &NATS{conn: nc, log: log}
+	out.fips.Store(FIPLookup(NoopFIPLookup{}))
+	return out, nil
 }
 
-// SetFIPLookup swaps the publisher's active-FIP source. Safe to call
-// after NewNATS but BEFORE the publisher is shared — the field isn't
-// guarded since the production wiring sets it once at startup and
-// never mutates it. Tests call this to inject a stub.
+// SetFIPLookup swaps the publisher's active-FIP source. The leader
+// election callback fires this AFTER the gRPC server is already
+// accepting traffic — concurrent Publish reads through fipLookup()
+// see the new value via atomic.Value's release/acquire semantics.
 func (n *NATS) SetFIPLookup(fips FIPLookup) {
 	if n == nil {
 		return
@@ -69,7 +76,18 @@ func (n *NATS) SetFIPLookup(fips FIPLookup) {
 	if fips == nil {
 		fips = NoopFIPLookup{}
 	}
-	n.fips = fips
+	n.fips.Store(fips)
+}
+
+// fipLookup reads the currently-installed FIPLookup atomically.
+// Returns NoopFIPLookup as a defensive fallback if the Value is
+// somehow zero (should not happen — NewNATS seeds the slot).
+func (n *NATS) fipLookup() FIPLookup {
+	v := n.fips.Load()
+	if v == nil {
+		return NoopFIPLookup{}
+	}
+	return v.(FIPLookup)
 }
 
 // Close drains the NATS connection. Idempotent.
@@ -95,7 +113,7 @@ func (n *NATS) Publish(ctx context.Context, r router.Router) error {
 		))
 	defer span.End()
 
-	state := StateFor(r, n.fips)
+	state := StateFor(r, n.fipLookup())
 	if len(state.Peers) == 0 && len(state.Prefixes) == 0 {
 		// Nothing actionable — peer router or escape-hatch egress.
 		// Log so the operator can confirm intent.
