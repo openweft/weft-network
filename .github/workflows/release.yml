@@ -43,7 +43,7 @@ jobs:
     env:
       IMAGE: ghcr.io/openweft/weft-network
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref || github.ref }}
           fetch-depth: 0   # so `git describe` works in -ldflags stamps
@@ -52,13 +52,13 @@ jobs:
       # header comment). Pull the sibling proto + vendor before docker
       # build.
       - name: Checkout weft-network-proto (for the replace)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: openweft/weft-network-proto
           path: ../weft-network-proto
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: '1.26.x'
 
@@ -159,7 +159,7 @@ jobs:
         # No GitHub Release object is created by this workflow (image-only
         # publish), so park the SBOM as a workflow artifact for forensic
         # recall. Verifiers should prefer the cosign attestation above.
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: weft-network-sbom-${{ steps.stamps.outputs.version }}
           path: weft-network.spdx.json

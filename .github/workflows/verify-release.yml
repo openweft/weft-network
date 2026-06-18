@@ -31,19 +31,19 @@ jobs:
         arch: [amd64, arm64]
     steps:
       - name: checkout the tag
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.tag }}
           fetch-depth: 0
 
       - name: checkout weft-network-proto (for the replace)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: openweft/weft-network-proto
           path: ../weft-network-proto
 
       - name: setup Go (for `go mod vendor`)
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: '1.26.x'
 
