@@ -86,7 +86,7 @@ require (
 
 require (
 	github.com/openweft/weft-client v0.0.0
-	github.com/openweft/weft-proto v0.12.0
+	github.com/openweft/weft-proto v0.14.0
 	github.com/openweft/weft-slognats v0.3.0
 	github.com/prometheus/client_model v0.6.2
 )
