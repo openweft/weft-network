@@ -36,12 +36,6 @@ jobs:
           ref: ${{ inputs.tag }}
           fetch-depth: 0
 
-      - name: checkout weft-network-proto (for the replace)
-        uses: actions/checkout@v7
-        with:
-          repository: openweft/weft-network-proto
-          path: ../weft-network-proto
-
       - name: setup Go (for `go mod vendor`)
         uses: actions/setup-go@v6
         with:
