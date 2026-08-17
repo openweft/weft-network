@@ -4,7 +4,7 @@ go 1.26
 
 require (
 	github.com/nats-io/nats.go v1.52.0
-	github.com/openweft/weft-network-proto v0.0.0
+	github.com/openweft/weft-network-proto v0.1.1
 	github.com/prometheus/client_golang v1.23.2
 	github.com/spf13/cobra v1.10.2
 	go.etcd.io/etcd/client/v3 v3.6.11
@@ -85,18 +85,8 @@ require (
 )
 
 require (
-	github.com/openweft/weft-client v0.0.0
+	github.com/openweft/weft-client v0.2.2
 	github.com/openweft/weft-proto v0.14.0
 	github.com/openweft/weft-slognats v0.3.0
 	github.com/prometheus/client_model v0.6.2
 )
-
-// Local replaces for the weft control-plane API surface that
-// lifecycle/weftclient uses to call RegisterMicroVM / StopVM /
-// DeleteVM. The replace paths mirror the working-tree layout ;
-// release builds resolve these to module-proxy tags.
-replace github.com/openweft/weft-proto => ../weft-proto
-
-replace github.com/openweft/weft-client => ../weft-client
-
-replace github.com/openweft/weft-network-proto => ../weft-network-proto

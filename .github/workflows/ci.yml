@@ -16,14 +16,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # weft-network depends on the sibling weft-network-proto module via
-      # a `replace` directive ; CI clones it alongside.
-      - name: Checkout weft-network-proto
-        uses: actions/checkout@v7
-        with:
-          repository: openweft/weft-network-proto
-          path: ../weft-network-proto
-
       - name: Setup Go
         uses: actions/setup-go@v6
         with:
@@ -41,11 +33,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - name: Checkout weft-network-proto
-        uses: actions/checkout@v7
-        with:
-          repository: openweft/weft-network-proto
-          path: ../weft-network-proto
       - name: Setup Go
         uses: actions/setup-go@v6
         with:
@@ -63,21 +50,13 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # weft-network depends on the sibling weft-network-proto module
-      # via `replace ../weft-network-proto`. The docker image is built
-      # from a vendored tree so it doesn't need network access at
-      # `docker build` time + so the replace resolves locally.
-      - name: Checkout weft-network-proto (for the replace)
-        uses: actions/checkout@v7
-        with:
-          repository: openweft/weft-network-proto
-          path: ../weft-network-proto
-
       - name: Setup Go
         uses: actions/setup-go@v6
         with:
           go-version: '1.26.x'
 
+      # The docker image is built from a vendored tree so it doesn't
+      # need network access at `docker build` time.
       - name: Vendor dependencies
         run: go mod vendor
 

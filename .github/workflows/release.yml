@@ -49,14 +49,7 @@ jobs:
           fetch-depth: 0   # so `git describe` works in -ldflags stamps
 
       # The Dockerfile expects a vendored module tree (see the file's
-      # header comment). Pull the sibling proto + vendor before docker
-      # build.
-      - name: Checkout weft-network-proto (for the replace)
-        uses: actions/checkout@v7
-        with:
-          repository: openweft/weft-network-proto
-          path: ../weft-network-proto
-
+      # header comment); vendor before docker build.
       - name: Setup Go
         uses: actions/setup-go@v6
         with:
