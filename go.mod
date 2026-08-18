@@ -1,6 +1,6 @@
 module github.com/openweft/weft-network
 
-go 1.26
+go 1.26.4
 
 require (
 	github.com/nats-io/nats.go v1.52.0
