@@ -23,6 +23,12 @@ on:
         description: 'Git ref to build from (defaults to the current branch).'
         required: false
         default: ''
+  # Build (never push/sign/attest) on every PR, so a Dockerfile or
+  # platform-list change gets real CI signal instead of "no checks" —
+  # matches weft-loom-gotex's convention in this org. Every step past
+  # the build itself (login, sign, SBOM, provenance) is guarded off for
+  # this trigger since they all need a real pushed digest to operate on.
+  pull_request:
 
 permissions:
   contents: read
@@ -65,6 +71,7 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Login to GHCR
+        if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -104,7 +111,7 @@ jobs:
           # emulation for every target — required for linux/loong64, since
           # the official golang image publishes no loong64 manifest at all.
           platforms: linux/amd64,linux/arm64,linux/riscv64,linux/loong64
-          push: true
+          push: ${{ github.event_name != 'pull_request' }}
           provenance: false
           sbom: false
           tags: |
@@ -121,10 +128,12 @@ jobs:
           cache-to: type=gha,mode=max
 
       - uses: sigstore/cosign-installer@v3
+        if: github.event_name != 'pull_request'
 
       - name: Sign image (keyless)
         # Sign the multi-arch manifest digest so the signature stays
         # bound to the bytes even if the tag is later moved.
+        if: github.event_name != 'pull_request'
         env:
           COSIGN_EXPERIMENTAL: "1"
           DIGEST: ${{ steps.build.outputs.digest }}
@@ -133,8 +142,10 @@ jobs:
           cosign sign --yes "${IMAGE}@${DIGEST}"
 
       - uses: anchore/sbom-action/download-syft@v0
+        if: github.event_name != 'pull_request'
 
       - name: Generate image SBOM (SPDX 2.3 JSON)
+        if: github.event_name != 'pull_request'
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
         run: |
@@ -143,6 +154,7 @@ jobs:
             -o spdx-json=weft-network.spdx.json
 
       - name: Cosign-attest SBOM (spdxjson predicate)
+        if: github.event_name != 'pull_request'
         env:
           COSIGN_EXPERIMENTAL: "1"
           DIGEST: ${{ steps.build.outputs.digest }}
@@ -157,6 +169,7 @@ jobs:
         # No GitHub Release object is created by this workflow (image-only
         # publish), so park the SBOM as a workflow artifact for forensic
         # recall. Verifiers should prefer the cosign attestation above.
+        if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v7
         with:
           name: weft-network-sbom-${{ steps.stamps.outputs.version }}
@@ -166,7 +179,11 @@ jobs:
     # SLSA L3 provenance for the published image. Runs on an isolated
     # ephemeral builder GitHub controls — that's what earns L3 builder
     # identity. Produces an in-toto attestation attached to the
-    # registry manifest by digest.
+    # registry manifest by digest. Skipped entirely on pull_request:
+    # there is no pushed digest to attest to (publish's build step
+    # doesn't push on a PR), and needs.publish.outputs.digest would be
+    # empty.
+    if: github.event_name != 'pull_request'
     needs: publish
     permissions:
       contents: read
