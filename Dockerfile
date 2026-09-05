@@ -5,11 +5,11 @@
 # 16 MB ; no shell, no package manager, no surface area beyond the
 # daemon itself.
 #
-# The build EXPECTS a vendored module tree. Run `go mod vendor`
-# (pointing at a checked-out sibling weft-network-proto) before
-# `docker build` ; the in-repo go.mod has a `replace ../weft-network-proto`
-# directive that the vendor step resolves, and the Dockerfile then
-# builds with `-mod=vendor` so no network access is needed.
+# The build EXPECTS a vendored module tree. weft-network-proto is a real
+# published, tagged dependency now (go.mod has no `replace` directive —
+# dropped in #2), so `go mod vendor` needs nothing but network access to
+# the module proxy; the Dockerfile then builds with `-mod=vendor` so the
+# actual docker build step itself needs no network access.
 #
 # Build args :
 #   - VERSION : git describe output, stamped into the binary via
@@ -18,7 +18,6 @@
 #   - DATE    : RFC-3339 UTC build timestamp.
 #
 # Pre-build + build sequence :
-#   git clone https://github.com/openweft/weft-network-proto ../weft-network-proto
 #   go mod vendor
 #   docker build \
 #     --build-arg VERSION=$(git describe --tags --always --dirty) \
@@ -29,7 +28,15 @@
 ARG GO_VERSION=1.26
 
 # ---- build stage --------------------------------------------------
-FROM golang:${GO_VERSION}-alpine AS build
+# Pinned to --platform=$BUILDPLATFORM (the runner's own native arch, not the
+# target one) so it cross-compiles via GOOS/GOARCH instead of running the Go
+# toolchain itself under QEMU emulation for every target platform. This is
+# required for linux/loong64: the official golang image publishes no
+# linux/loong64 manifest at all, so a build stage tagged for the target
+# platform directly could never pull it even with QEMU installed. The
+# scratch final stage has no OS content of its own, so it never needs a
+# base-image manifest either.
+FROM --platform=$BUILDPLATFORM golang:${GO_VERSION}-alpine AS build
 
 WORKDIR /src
 COPY go.mod go.sum ./
@@ -40,8 +47,10 @@ COPY internal/ ./internal/
 ARG VERSION=dev
 ARG COMMIT=none
 ARG DATE=unknown
+ARG TARGETOS
+ARG TARGETARCH
 
-RUN CGO_ENABLED=0 GOOS=linux go build \
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
       -mod=vendor \
       -trimpath \
       -ldflags "-s -w \
