@@ -58,6 +58,9 @@ jobs:
       - name: Vendor dependencies
         run: go mod vendor
 
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
       - name: Set up Docker buildx
         uses: docker/setup-buildx-action@v3
 
@@ -95,10 +98,12 @@ jobs:
           SOURCE_DATE_EPOCH: ${{ steps.stamps.outputs.epoch }}
         with:
           context: .
-          # Multi-arch image — arm64 + amd64 cover the cluster topologies
-          # we support. The Dockerfile build is pure-Go CGO=0 so QEMU
-          # emulation is fast enough for CI.
-          platforms: linux/amd64,linux/arm64
+          # Multi-arch image, matching the openweft 4-arch convention. The
+          # build stage is pinned to --platform=$BUILDPLATFORM (cross-
+          # compiles via GOOS/GOARCH) rather than running under QEMU
+          # emulation for every target — required for linux/loong64, since
+          # the official golang image publishes no loong64 manifest at all.
+          platforms: linux/amd64,linux/arm64,linux/riscv64,linux/loong64
           push: true
           provenance: false
           sbom: false
