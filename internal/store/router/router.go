@@ -21,13 +21,13 @@ import (
 // feeds back ; a freshly-created router starts at status="configuring"
 // / peer_state="" until the reconciler reports otherwise.
 type Router struct {
-	UUID        string
-	Name        string
-	Kind        string   // "peer" | "egress"
-	Backend     string   // "wireguard" | "gobgp" | "vyos" | "frr"
-	Networks    []string // tenant networks this router stitches
-	External    string   // AS number / peer IP — only for kind=egress
-	Prefixes    []string // CIDRs the router advertises (kind=egress + backend=gobgp)
+	UUID     string
+	Name     string
+	Kind     string   // "peer" | "egress"
+	Backend  string   // "wireguard" | "gobgp" | "vyos" | "frr"
+	Networks []string // tenant networks this router stitches
+	External string   // AS number / peer IP — only for kind=egress
+	Prefixes []string // CIDRs the router advertises (kind=egress + backend=gobgp)
 	// Replicas is the number of weft-router microVMs spawned for this
 	// router. Default 1 ; production HA setup is 2 or 3 spread across
 	// DCs/AZs. All replicas advertise the same prefixes — the upstream

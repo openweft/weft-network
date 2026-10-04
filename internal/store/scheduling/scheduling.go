@@ -5,9 +5,9 @@
 // rules from this store at startup and on watch events, then enforces
 // them at placement time. So implementing this domain is just :
 //
-//   1. CRUD against the store.
-//   2. Watch events for the agent to subscribe to (future ; today
-//      the agent re-reads on each scheduling pass).
+//  1. CRUD against the store.
+//  2. Watch events for the agent to subscribe to (future ; today
+//     the agent re-reads on each scheduling pass).
 package scheduling
 
 import (
@@ -27,32 +27,32 @@ import (
 // rule starts at Status="unschedulable" / Ready=0 until the agent
 // reports otherwise.
 type Rule struct {
-	UUID         string
-	Name         string
-	Count        int32
-	Ready        int32
-	Selector     string
-	AZ           string
-	Rack         string
-	Host         string
-	Project      string
-	Status       string
-	CreatedAtNs  int64
+	UUID        string
+	Name        string
+	Count       int32
+	Ready       int32
+	Selector    string
+	AZ          string
+	Rack        string
+	Host        string
+	Project     string
+	Status      string
+	CreatedAtNs int64
 }
 
 // ToProto returns the wire representation.
 func (r Rule) ToProto() *netv1.SchedulingRuleInfo {
 	return &netv1.SchedulingRuleInfo{
-		Uuid:           r.UUID,
-		Name:           r.Name,
-		Count:          r.Count,
-		Ready:          r.Ready,
-		Selector:       r.Selector,
-		Az:             r.AZ,
-		Rack:           r.Rack,
-		Host:           r.Host,
-		Project:        r.Project,
-		Status:         r.Status,
+		Uuid:            r.UUID,
+		Name:            r.Name,
+		Count:           r.Count,
+		Ready:           r.Ready,
+		Selector:        r.Selector,
+		Az:              r.AZ,
+		Rack:            r.Rack,
+		Host:            r.Host,
+		Project:         r.Project,
+		Status:          r.Status,
 		CreatedAtUnixNs: r.CreatedAtNs,
 	}
 }

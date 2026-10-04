@@ -12,7 +12,7 @@ import (
 // etcdPrefix is where every scheduling rule lives in etcd. One
 // key per rule, value = JSON-encoded Rule.
 //
-//   /weft/network/scheduling-rules/<uuid>  =  {"uuid":"…","name":"…",…}
+//	/weft/network/scheduling-rules/<uuid>  =  {"uuid":"…","name":"…",…}
 //
 // The (project,name) uniqueness check is implemented by listing
 // the prefix on Create. That's O(N) in rule count, fine while N

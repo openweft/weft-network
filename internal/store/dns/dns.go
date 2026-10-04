@@ -5,9 +5,9 @@
 // CoreDNS via RFC-2136 NS update or zone-file rendering. Implementing
 // this domain is just :
 //
-//   1. CRUD against the store, with referential integrity (records
-//      point at zone UUIDs).
-//   2. Watch events for the future reconciler to subscribe to.
+//  1. CRUD against the store, with referential integrity (records
+//     point at zone UUIDs).
+//  2. Watch events for the future reconciler to subscribe to.
 package dns
 
 import (
@@ -23,17 +23,17 @@ import (
 // every record Create / Delete, so the dashboard's zone list shows
 // the count without a second round-trip.
 type Zone struct {
-	UUID         string
-	Name         string
-	Role         string // "primary" | "secondary" | "forward"
-	Records      int32
-	TTLDefault   int32
-	Backend      string // "coredns" today ; reserved for future swaps
-	PushTarget   string
-	PushState    string
-	Project      string
-	Status       string // "active" | "syncing" | "failed"
-	CreatedAtNs  int64
+	UUID        string
+	Name        string
+	Role        string // "primary" | "secondary" | "forward"
+	Records     int32
+	TTLDefault  int32
+	Backend     string // "coredns" today ; reserved for future swaps
+	PushTarget  string
+	PushState   string
+	Project     string
+	Status      string // "active" | "syncing" | "failed"
+	CreatedAtNs int64
 }
 
 // ToProto returns the wire representation.

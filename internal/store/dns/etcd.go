@@ -10,8 +10,8 @@ import (
 
 // etcd layout :
 //
-//   /weft/network/dns-zones/<uuid>    = JSON Zone
-//   /weft/network/dns-records/<uuid>  = JSON Record
+//	/weft/network/dns-zones/<uuid>    = JSON Zone
+//	/weft/network/dns-records/<uuid>  = JSON Record
 //
 // Cross-collection references (Record.ZoneUUID → Zone) are denormalised
 // on write : CreateRecord copies the Zone.Name into Record.ZoneName so

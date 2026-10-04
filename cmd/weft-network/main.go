@@ -23,6 +23,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/nats-io/nats.go"
 	"github.com/openweft/weft-network/internal/fips"
 	"github.com/openweft/weft-network/internal/leader"
 	"github.com/openweft/weft-network/internal/lifecycle"
@@ -33,7 +34,6 @@ import (
 	"github.com/openweft/weft-network/internal/tlsutil"
 	"github.com/openweft/weft-network/internal/tracing"
 	weftslognats "github.com/openweft/weft-slognats"
-	"github.com/nats-io/nats.go"
 	"github.com/spf13/cobra"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"

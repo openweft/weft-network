@@ -52,9 +52,9 @@ func TestUUIDFromSubject(t *testing.T) {
 	}{
 		{"weft.router.abc-123.status", true, "abc-123"},
 		{"weft.router..status", false, ""},
-		{"weft.router.a.b.status", false, ""},        // extra dot in middle
+		{"weft.router.a.b.status", false, ""}, // extra dot in middle
 		{"other.subject", false, ""},
-		{"weft.router.xxx.config", false, ""},        // wrong suffix
+		{"weft.router.xxx.config", false, ""}, // wrong suffix
 		{"", false, ""},
 	}
 	for _, tc := range cases {

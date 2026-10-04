@@ -13,11 +13,11 @@ import (
 // DeleteZone cascades to records). When the etcd backend lands it
 // honours the same contract — the etcd transaction wraps both writes.
 type memoryStore struct {
-	mu          sync.Mutex
-	zones       map[string]Zone   // uuid → Zone
-	zoneByName  map[string]string // "<project>|<name>" → uuid
-	records     map[string]Record // uuid → Record
-	recordsByZ  map[string]map[string]struct{} // zoneUUID → set of recordUUID
+	mu         sync.Mutex
+	zones      map[string]Zone                // uuid → Zone
+	zoneByName map[string]string              // "<project>|<name>" → uuid
+	records    map[string]Record              // uuid → Record
+	recordsByZ map[string]map[string]struct{} // zoneUUID → set of recordUUID
 }
 
 // NewMemory builds an empty in-memory DNS store.
