@@ -30,10 +30,10 @@ type platformEvent struct {
 // released / mapped / unmapped). The handler translates each kind
 // into an Index.Upsert or Index.Delete :
 //
-//   floating_ip.allocated → Upsert(Mapped=false)  // tracked but not surfaced
-//   floating_ip.mapped    → Upsert(Mapped=true)
-//   floating_ip.unmapped  → Upsert(Mapped=false)
-//   floating_ip.released  → Delete
+//	floating_ip.allocated → Upsert(Mapped=false)  // tracked but not surfaced
+//	floating_ip.mapped    → Upsert(Mapped=true)
+//	floating_ip.unmapped  → Upsert(Mapped=false)
+//	floating_ip.released  → Delete
 //
 // On every relevant event, the subscriber also calls the optional
 // OnChange callback so the caller can trigger a republish for every

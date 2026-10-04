@@ -6,19 +6,19 @@
 // Architecture (per [[openweft-pull-model]] : cross-daemon = pull,
 // not push) :
 //
-//   weft (control plane) ─ PlatformEvent on bus
-//     "floating_ip.allocated|released|mapped|unmapped"
-//                  │
-//                  ▼ NATS subject "weft.events.floating_ip.*"
-//   weft-network ── Subscriber.decode
-//                  │
-//                  ▼ Index.Update(ev) — in-memory map
-//      (project, network) → set of active addresses
-//                  │
-//                  ▼ publisher.FIPLookup.ActiveFIPsInNetworks(r.Networks)
-//                  ▼ DesiredState.Prefixes append <addr>/32 each
-//                  ▼ NATS subject "weft.router.<uuid>.config"
-//   weft-router (microVM) ── GoBGP AddPath /32 → upstream ISP
+//	weft (control plane) ─ PlatformEvent on bus
+//	  "floating_ip.allocated|released|mapped|unmapped"
+//	               │
+//	               ▼ NATS subject "weft.events.floating_ip.*"
+//	weft-network ── Subscriber.decode
+//	               │
+//	               ▼ Index.Update(ev) — in-memory map
+//	   (project, network) → set of active addresses
+//	               │
+//	               ▼ publisher.FIPLookup.ActiveFIPsInNetworks(r.Networks)
+//	               ▼ DesiredState.Prefixes append <addr>/32 each
+//	               ▼ NATS subject "weft.router.<uuid>.config"
+//	weft-router (microVM) ── GoBGP AddPath /32 → upstream ISP
 //
 // The index is the only state — there's no Reconciler.Apply here.
 // publisher.go reads the index synchronously on every Publish call ;
@@ -60,7 +60,7 @@ type Entry struct {
 type Index struct {
 	mu      sync.RWMutex
 	byUUID  map[string]Entry
-	byAddr  map[string]string // (network, address) → uuid ; collision detection
+	byAddr  map[string]string              // (network, address) → uuid ; collision detection
 	netUUID map[string]map[string]struct{} // network_uuid → set of FIP uuids
 }
 
@@ -139,11 +139,11 @@ func (i *Index) ActiveFIPsInNetworks(networks []string) []string {
 // snapshot. Returns three sets keyed by NetworkUUID identifying the
 // nature of the change :
 //
-//   * added   — networks that gained at least one Mapped entry
-//   * removed — networks that lost their last Mapped entry
-//   * churned — networks where a Mapped entry's Address changed but
-//               the count stayed > 0 (matters because the announce
-//               set itself changed even if the cardinality didn't)
+//   - added   — networks that gained at least one Mapped entry
+//   - removed — networks that lost their last Mapped entry
+//   - churned — networks where a Mapped entry's Address changed but
+//     the count stayed > 0 (matters because the announce
+//     set itself changed even if the cardinality didn't)
 //
 // Callers feed each affected network into their republish trigger
 // so weft-router gets the updated /32 announce set on the next

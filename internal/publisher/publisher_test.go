@@ -26,9 +26,9 @@ func TestParseExternalPeer(t *testing.T) {
 		{"", false, "", 0},
 		{"198.51.100.1", true, "198.51.100.1", 0},
 		{"65512:198.51.100.1", true, "198.51.100.1", 65512},
-		{"2001:db8::1", true, "2001:db8::1", 0},   // IPv6 bare
+		{"2001:db8::1", true, "2001:db8::1", 0}, // IPv6 bare
 		{"not-an-ip", false, "", 0},
-		{"abc:198.51.100.1", false, "", 0},        // non-numeric ASN
+		{"abc:198.51.100.1", false, "", 0}, // non-numeric ASN
 		{"65512:not-an-ip", false, "", 0},
 	}
 	for _, tc := range cases {

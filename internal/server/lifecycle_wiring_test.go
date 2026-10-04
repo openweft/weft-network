@@ -14,8 +14,8 @@ import (
 // fakePublisher in publisher_wiring_test.go ; same contract, opposite
 // orchestration concern.
 type fakeLifecycle struct {
-	mu       sync.Mutex
-	ensured  []router.Router
+	mu        sync.Mutex
+	ensured   []router.Router
 	destroyed []string
 }
 

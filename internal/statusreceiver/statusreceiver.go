@@ -50,19 +50,19 @@ type RouterStatus struct {
 	// is Idle/Active. weft-router computes this server-side but the
 	// receiver re-derives it from Peers so a malformed Overall doesn't
 	// pin the store to a misleading state.
-	Overall          string       `json:"Overall"`
-	Peers            []PeerStatus `json:"Peers"`
-	RoutesInstalled  int          `json:"RoutesInstalled"`
-	PublishedAtUnix  int64        `json:"PublishedAtUnix"`
+	Overall         string       `json:"Overall"`
+	Peers           []PeerStatus `json:"Peers"`
+	RoutesInstalled int          `json:"RoutesInstalled"`
+	PublishedAtUnix int64        `json:"PublishedAtUnix"`
 }
 
 // Receiver wraps a NATS subscription and pushes incoming status
 // messages to a router.Store.
 type Receiver struct {
-	log    *slog.Logger
-	url    string
-	opts   []nats.Option
-	store  router.Store
+	log   *slog.Logger
+	url   string
+	opts  []nats.Option
+	store router.Store
 
 	conn *nats.Conn
 	sub  *nats.Subscription

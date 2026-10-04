@@ -105,7 +105,7 @@ func ServerCredentials(o Options) (credentials.TransportCredentials, error) {
 		// re-reads on every handshake.
 		caPath := o.ClientCAFile
 		cfg.VerifyPeerCertificate = nil // intentionally nil — we rely on the standard chain check ; rotation is in the bundle, not the algorithm
-		_ = caPath                       // reserved for future per-handshake CA reload symmetry
+		_ = caPath                      // reserved for future per-handshake CA reload symmetry
 	}
 	return credentials.NewTLS(cfg), nil
 }

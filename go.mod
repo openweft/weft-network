@@ -1,22 +1,6 @@
 module github.com/openweft/weft-network
 
-go 1.26.4
-
-require (
-	github.com/nats-io/nats.go v1.52.0
-	github.com/openweft/weft-network-proto v0.1.1
-	github.com/prometheus/client_golang v1.23.2
-	github.com/spf13/cobra v1.10.2
-	go.etcd.io/etcd/client/v3 v3.6.11
-	go.etcd.io/etcd/server/v3 v3.6.11
-	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.59.0
-	go.opentelemetry.io/otel v1.40.0
-	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.34.0
-	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.34.0
-	go.opentelemetry.io/otel/sdk v1.40.0
-	go.opentelemetry.io/otel/trace v1.40.0
-	google.golang.org/grpc v1.80.0
-)
+go 1.27.1
 
 require (
 	github.com/agext/levenshtein v1.2.1 // indirect
@@ -85,8 +69,21 @@ require (
 )
 
 require (
+	github.com/nats-io/nats.go v1.52.0
 	github.com/openweft/weft-client v0.2.2
+	github.com/openweft/weft-network-proto v0.1.1
 	github.com/openweft/weft-proto v0.14.0
 	github.com/openweft/weft-slognats v0.3.0
+	github.com/prometheus/client_golang v1.23.2
 	github.com/prometheus/client_model v0.6.2
+	github.com/spf13/cobra v1.10.2
+	go.etcd.io/etcd/client/v3 v3.6.11
+	go.etcd.io/etcd/server/v3 v3.6.11
+	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.59.0
+	go.opentelemetry.io/otel v1.40.0
+	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.34.0
+	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.34.0
+	go.opentelemetry.io/otel/sdk v1.40.0
+	go.opentelemetry.io/otel/trace v1.40.0
+	google.golang.org/grpc v1.80.0
 )

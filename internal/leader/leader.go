@@ -33,10 +33,10 @@ import (
 //
 // Lifecycle :
 //
-//   e, err := leader.New(cli, leader.Options{Key: "/weft-network/leader", Identity: hostID, TTL: 10})
-//   ctx, cancel := context.WithCancel(context.Background())
-//   defer cancel()
-//   if err := e.Run(ctx, onAcquire, onLost); err != nil { ... }
+//	e, err := leader.New(cli, leader.Options{Key: "/weft-network/leader", Identity: hostID, TTL: 10})
+//	ctx, cancel := context.WithCancel(context.Background())
+//	defer cancel()
+//	if err := e.Run(ctx, onAcquire, onLost); err != nil { ... }
 //
 // Run blocks until ctx is cancelled. It campaigns continuously :
 // if a leader exists, it waits ; once acquired, it calls onAcquire
@@ -47,9 +47,9 @@ import (
 // callers should keep them quick (start/stop goroutines, no
 // long-running work in-band). They MUST NOT block forever.
 type Election struct {
-	cli     *clientv3.Client
-	opts    Options
-	log     *slog.Logger
+	cli  *clientv3.Client
+	opts Options
+	log  *slog.Logger
 }
 
 // Options carries the static config for one Election.
