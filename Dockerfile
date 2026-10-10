@@ -25,7 +25,7 @@
 #     --build-arg DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
 #     -t ghcr.io/openweft/weft-network:dev .
 
-ARG GO_VERSION=1.27.1
+ARG GO_VERSION=1.27.2
 
 # ---- build stage --------------------------------------------------
 # Pinned to --platform=$BUILDPLATFORM (the runner's own native arch, not the
